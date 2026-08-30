@@ -139,6 +139,13 @@
   flex: 0 0 auto;
 }
 
+.header-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 1fr;
@@ -246,9 +253,13 @@
     order: 2;
   }
 
-  .actions #settingsBtn {
+  .actions .header-tools {
     order: 3;
     margin-left: auto;
+  }
+
+  .actions #settingsBtn {
+    order: 2;
   }
 
   .table-wrap {

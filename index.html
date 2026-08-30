@@ -35,7 +35,10 @@
     
             <div class="actions">
                 <button id="logoutBtn" type="button" class="logout-btn">Sign Out</button>
-                <button id="settingsBtn" type="button" class="settings-btn" aria-haspopup="dialog" aria-controls="apiKeyModal" aria-label="Settings" title="Settings">⚙</button>
+                <div class="header-tools">
+                    <button id="infoBtn" type="button" class="info-btn" aria-haspopup="dialog" aria-controls="predictionInfoModal" aria-label="Prediction info" title="Prediction info">i</button>
+                    <button id="settingsBtn" type="button" class="settings-btn" aria-haspopup="dialog" aria-controls="apiKeyModal" aria-label="Settings" title="Settings">⚙</button>
+                </div>
             </div>
         </header>
 
@@ -98,6 +101,72 @@
             </div>
         </div>  
 
+        <div id="predictionInfoModal" class="modal prediction-info-modal" role="dialog" aria-modal="true" aria-labelledby="predictionInfoModalTitle">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <h3 id="predictionInfoModalTitle">How Predictions Work</h3>
+                    <button type="button" class="modal-close" data-close-modal="true" aria-label="Close prediction info">x</button>
+                </div>
+
+                <div class="info-content">
+                    <section class="info-section">
+                        <h4>Prediction sources</h4>
+                        <ul class="info-list">
+                            <li>If a locked pregame snapshot exists after the cutoff window, the app reuses that snapshot so the displayed pick does not drift after kickoff.</li>
+                            <li>If no locked snapshot exists, the app tries recent team history, then full history, then market consensus from Sportsbet h2h odds.</li>
+                            <li>If neither usable history nor odds are available, a deterministic fallback prediction is shown, but confidence is low.</li>
+                        </ul>
+                    </section>
+
+                    <section class="info-section">
+                        <h4>Main prediction fields</h4>
+                        <div class="info-grid">
+                            <div class="info-card">
+                                <strong>Prediction label</strong>
+                                <p>The highest-probability outcome: home team, away team, or draw.</p>
+                            </div>
+                            <div class="info-card">
+                                <strong>Win chance</strong>
+                                <p>The displayed lean percentage. In market mode, the strongest outcome is clamped into a narrow display band before being shown.</p>
+                            </div>
+                            <div class="info-card">
+                                <strong>Edge</strong>
+                                <p>The gap between the top and runner-up probabilities. Larger gaps produce stronger visual tiers and a higher confidence score.</p>
+                            </div>
+                            <div class="info-card">
+                                <strong>Confidence</strong>
+                                <p>Derived from edge size, probability agreement, and sample size. Fallback predictions are treated more conservatively.</p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="info-section">
+                        <h4>Stats on each card</h4>
+                        <ul class="info-list">
+                            <li><strong>History win</strong> uses prior outcomes for the chosen side after conservative weighting and sample-size smoothing.</li>
+                            <li><strong>Model win</strong> uses the model-estimated probability after additional tightening.</li>
+                            <li><strong>Odds implied</strong> is computed from decimal odds as 1 / odds.</li>
+                            <li><strong>Home win</strong> and <strong>Away win</strong> show venue-specific win rates from historical results.</li>
+                            <li><strong>Home score</strong>, <strong>Away score</strong>, and <strong>Both score</strong> estimate scoring likelihood from recent form.</li>
+                            <li><strong>Venue edge</strong> compares home venue win rate against away venue performance.</li>
+                        </ul>
+                    </section>
+
+                    <section class="info-section">
+                        <h4>How the visuals are used</h4>
+                        <ul class="info-list">
+                            <li>The color tiers are display-only: red means weak, orange means moderate, green means strong, and gold means strongest.</li>
+                            <li>Win-chance badges use separate thresholds from the stat tiers, so a card can look strong in one dimension and average in another.</li>
+                            <li>The win-rate filter hides predictions below the minimum visible threshold, which is currently 50%.</li>
+                            <li>Top-bet suggestions and result cards reuse the same prediction object, so the same calculation drives all views.</li>
+                        </ul>
+                    </section>
+
+                    <p class="info-note">These are conservative heuristics, not guarantees. The app is designed to compare market signals and recent form, then present the result with clear confidence and history context.</p>
+                </div>
+            </div>
+        </div>
+
         <div class="layout">
             <section class="panel">
                 <div class="panel-head">
@@ -114,6 +183,7 @@
                     <div class="catalog-tools">
                         <input id="sportsSearchInput" class="sports-search-input" type="search" placeholder="Search sports by key, title or group" aria-label="Search sports catalog">
                     </div>
+                    <div id="status" class="status" aria-live="polite"></div>
                     <div id="tableWrap" class="table-wrap">
                         <div class="empty">No data loaded yet.</div>
                     </div>

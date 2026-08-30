@@ -2453,6 +2453,8 @@ async function loadUpcomingForSport(sportKey, apiKey) {
 	if (!sportKey) {
 		return;
 	}
+	state.rangeLoading = true;
+	syncRangeButtons();
 	setView("upcoming");
 	state.activeSportKey = sportKey;
 	state.favoriteUpcomingSportTitles = [];
@@ -2654,6 +2656,8 @@ async function loadRecentResultsForSelectedScope(apiKey) {
 	if (!apiKey) {
 		return;
 	}
+	state.rangeLoading = true;
+	syncRangeButtons();
 	setView("recent");
 	state.activeSportKey = "";
 	state.activeRecentSportData = null;
@@ -2776,6 +2780,8 @@ async function loadRecentResultsForSport(sportKey, apiKey) {
 	if (!sportKey) {
 		return;
 	}
+	state.rangeLoading = true;
+	syncRangeButtons();
 	setView("recent");
 	state.activeSportKey = sportKey;
 	renderSportsTable(state.sportsRows);
@@ -2841,7 +2847,7 @@ async function loadRecentResultsForSport(sportKey, apiKey) {
 		}));
 		state.recentScopeLabel = state.sportsByKey[sportKey] && state.sportsByKey[sportKey].title ? String(state.sportsByKey[sportKey].title) : sportKey;
 		markDataLoaded();
-		setStatus('Recent results loaded for ' + sportKey + ': ' + lastSevenGames.length + ' games', 'ok');
+		setStatus('Recent results loaded for ' + sportKey + ': ' + recentGames.length + ' games', 'ok');
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
 		const cachedScores = readCache("recent_scores_" + sportKey);
@@ -2871,6 +2877,8 @@ async function loadAllSportsUpcoming(apiKey) {
 	if (!apiKey) {
 		return;
 	}
+	state.rangeLoading = true;
+	syncRangeButtons();
 	setView('upcoming');
 	state.activeSportKey = "";
 	state.activeUpcomingSportData = null;

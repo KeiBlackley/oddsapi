@@ -13,10 +13,14 @@ const RANGE_SELECTION_KEY = "keieye_selected_range_v1";
 const LAST_DATA_LOAD_KEY = "keieye_last_data_load_v1";
 
 const el = {
+	infoBtn: document.getElementById("infoBtn"),
 	settingsBtn: document.getElementById("settingsBtn"),
 	apiKeyModal: document.getElementById("apiKeyModal"),
 	apiKeyModalTitle: document.getElementById("apiKeyModalTitle"),
 	modalCloseBtn: document.querySelector('.modal-close'),
+	predictionInfoModal: document.getElementById("predictionInfoModal"),
+	predictionInfoModalTitle: document.getElementById("predictionInfoModalTitle"),
+	predictionInfoModalCloseBtn: document.querySelector('.prediction-info-modal .modal-close'),
 	apiKeyLabel: document.querySelector('label[for="apiKeyInput"]'),
 	apiKeyInput: document.getElementById("apiKeyInput"),
 	swapApiKeyBtn: document.getElementById("swapApiKeyBtn"),
@@ -1007,6 +1011,7 @@ function requireLoginOrRedirect() {
 }
 
 function openApiKeyModal() {
+	closePredictionInfoModal();
 	syncApiKeyModalMode();
 	if (el.apiKeyInput) {
 		el.apiKeyInput.value = isLoginMode() ? "" : state.apiKey || "";
@@ -1016,6 +1021,22 @@ function openApiKeyModal() {
 	if (isLoginMode() && el.apiKeyInput) {
 		window.setTimeout(() => el.apiKeyInput.focus(), 40);
 	}
+}
+
+function openPredictionInfoModal() {
+	if (el.predictionInfoModal) {
+		el.predictionInfoModal.classList.add("is-open");
+	}
+	if (el.predictionInfoModalCloseBtn) {
+		window.setTimeout(() => el.predictionInfoModalCloseBtn.focus(), 40);
+	}
+}
+
+function closePredictionInfoModal() {
+	if (!el.predictionInfoModal) {
+		return;
+	}
+	el.predictionInfoModal.classList.remove("is-open");
 }
 
 function closeApiKeyModal() {

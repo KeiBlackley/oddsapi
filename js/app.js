@@ -56,6 +56,12 @@ function init() {
 	}
 
 	el.settingsBtn.addEventListener('click', () => openApiKeyModal());
+	if (el.infoBtn) {
+		el.infoBtn.addEventListener('click', () => {
+			closeApiKeyModal();
+			openPredictionInfoModal();
+		});
+	}
 	if (el.cancelApiKeyBtn) {
 		el.cancelApiKeyBtn.addEventListener('click', () => closeApiKeyModal());
 	}
@@ -92,6 +98,13 @@ function init() {
 			closeApiKeyModal();
 		}
 	});
+	if (el.predictionInfoModal) {
+		el.predictionInfoModal.addEventListener('click', (event) => {
+			if (event.target instanceof HTMLElement && (event.target === el.predictionInfoModal || event.target.dataset.closeModal === 'true')) {
+				closePredictionInfoModal();
+			}
+		});
+	}
 	el.apiKeyInput.addEventListener('keydown', (event) => {
 		if (event.key === 'Escape' && !isLoginMode()) {
 			closeApiKeyModal();
@@ -273,6 +286,11 @@ function init() {
 			logoutCurrentUser();
 		});
 	}
+	document.addEventListener('keydown', (event) => {
+		if (event.key === 'Escape' && el.predictionInfoModal && el.predictionInfoModal.classList.contains('is-open')) {
+			closePredictionInfoModal();
+		}
+	});
 }
 
 init();
