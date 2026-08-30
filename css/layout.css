@@ -1,0 +1,264 @@
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.appbar {
+  position: sticky;
+  top: 8px;
+  z-index: 30;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(170, 197, 235, 0.28);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(10, 33, 60, 0.74), rgba(7, 24, 45, 0.64));
+  box-shadow: 0 14px 28px rgba(1, 8, 18, 0.42);
+  backdrop-filter: blur(12px);
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition: transform 180ms ease, opacity 180ms ease, visibility 180ms ease, box-shadow 180ms ease;
+}
+
+.appbar.is-hidden {
+  transform: translateY(-140%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.secondary-appbar {
+  position: sticky;
+  top: 78px;
+  z-index: 29;
+  padding: 8px 10px;
+  border: 1px solid rgba(170, 197, 235, 0.24);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(11, 37, 67, 0.7), rgba(8, 28, 52, 0.62));
+  box-shadow: 0 10px 22px rgba(1, 8, 18, 0.36);
+  backdrop-filter: blur(12px);
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+  transition: transform 180ms ease, opacity 180ms ease, visibility 180ms ease, box-shadow 180ms ease;
+}
+
+.secondary-appbar.is-hidden {
+  transform: translateY(-165%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.sport-filter-buttons {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+
+.sport-filter-btn {
+  padding: 6px 11px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.control-stack {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+
+.control-group {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 4px;
+  background: rgba(148, 183, 224, 0.14);
+  border: 1px solid rgba(176, 205, 239, 0.24);
+  border-radius: 12px;
+}
+
+.control-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  box-shadow: none;
+  padding: 8px 13px;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.82;
+}
+
+.range-btn:not(.is-active) {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(238, 238, 238, 0.8);
+}
+
+.range-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.control-btn.is-active {
+  background: linear-gradient(180deg, rgba(0, 51, 102, 1), rgba(2, 66, 122, 1));
+  border-color: rgba(0, 51, 102, 0.5);
+  color: #f2f2f2;
+  box-shadow: 0 2px 8px rgba(0, 51, 102, 0.12);
+  opacity: 1;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  min-height: 0;
+  align-items: start;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgba(15, 27, 42, 0.82), rgba(10, 20, 33, 0.76));
+  box-shadow: 0 16px 34px rgba(1, 6, 14, 0.5), 0 5px 16px rgba(2, 6, 12, 0.26);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.panel-head {
+  padding: 13px 14px;
+  border-bottom: 1px solid rgba(119, 164, 215, 0.24);
+  background: linear-gradient(90deg, rgba(17, 48, 84, 0.72), rgba(14, 42, 74, 0.58) 48%, rgba(20, 56, 92, 0.72));
+}
+
+.panel-head-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-head-copy {
+  display: flex;
+  flex-direction: column;
+}
+
+#backBtn {
+  margin-right: 2px;
+}
+
+.title {
+  margin: 0;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: clamp(1rem, 1.9vw, 1.34rem);
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  line-height: 1.2;
+  color: #eeeeee;
+}
+
+.panel-sub {
+  margin: 4px 0 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(238, 238, 238, 0.82);
+}
+
+.panel-body {
+  padding: 12px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@media (max-width: 760px) {
+  .masthead,
+  .appbar,
+  .secondary-appbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .appbar {
+    padding: 8px;
+  }
+
+  .appbar .control-stack {
+    display: none;
+  }
+
+  .secondary-appbar {
+    display: none;
+  }
+
+  .sport-filter-buttons {
+    width: 100%;
+    gap: 7px;
+    padding-bottom: 4px;
+  }
+
+  .actions {
+    width: 100%;
+    justify-content: flex-end;
+    align-items: center;
+  }
+
+  .actions > * {
+    flex: 0 0 auto;
+  }
+
+  .actions #logoutBtn {
+    order: 2;
+  }
+
+  .actions #settingsBtn {
+    order: 3;
+    margin-left: auto;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table-wrap table {
+    min-width: 560px;
+  }
+}
+
+
