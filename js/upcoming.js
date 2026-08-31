@@ -29,12 +29,17 @@ function formatDateTime(value) {
 }
 
 const SPORTSBOOK_KEY = "sportsbet";
-const HISTORY_LOOKBACK_DAYS = 365;
+const HISTORY_LOOKBACK_DAYS = 730;
 const RECENT_RESULTS_LOOKBACK_DAYS = 2;
-const ROLLING_HISTORY_MAX_ROWS = 900;
-const ROLLING_HISTORY_MAX_AGE_DAYS = 365;
+const MAX_RECENT_RESULTS_LOOKBACK_DAYS = 7;
+const ROLLING_HISTORY_MAX_ROWS = 1800;
+const ROLLING_HISTORY_MAX_AGE_DAYS = 730;
+const HISTORY_RECENT_FORM_DECAY = 0.975;
 const PREGAME_PREDICTION_STORE_KEY = "keieye_pregame_predictions_v1";
 const PREGAME_PREDICTION_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+const BACKTEST_HISTORY_KEY = "keieye_backtest_history_v1";
+const BACKTEST_TREND_WINDOW_KEY = "keieye_backtest_trend_window_v1";
+const EV_TOOLTIP_TEXT = "Compares our probability against the live market odds. If your model says a team has a 60% chance to win, but the bookmaker's odds imply only a 50% chance, you have found +EV (Positive Expected Value).";
 
 function clonePredictionPayload(prediction) {
 	if (!prediction || typeof prediction !== 'object') {
@@ -342,12 +347,13 @@ function buildGameInsightStats(eventRow, prediction, historyMap, oddsRow) {
 	const hasHomeHistory = Number.isFinite(homeMatches) && homeMatches >= 1;
 	const hasAwayHistory = Number.isFinite(awayMatches) && awayMatches >= 1;
 
-	const predictionOddsText = getDisplayOddsForEvent(eventRow, oddsRow, prediction);
-	const predictionOdds = Number(predictionOddsText);
-	const impliedByOdds = Number.isFinite(predictionOdds) && predictionOdds > 1 ? (1 / predictionOdds) : NaN;
+	const marketSnapshot = getPredictionMarketSnapshot(eventRow, oddsRow, prediction);
+	const predictionOddsText = marketSnapshot.oddsText;
+	const impliedByOdds = marketSnapshot.impliedProbability;
 	const modelWinLikelihood = Number.isFinite(Number(prediction && prediction.leanPct))
 		? Number(prediction.leanPct) / 100
 		: NaN;
+	const evPct = Number.isFinite(Number(prediction && prediction.evPct)) ? Number(prediction.evPct) : marketSnapshot.evPct;
 
 	const predictedTeam = prediction && prediction.predictedTeam ? String(prediction.predictedTeam) : "";
 	const predictedNorm = normalizeTeamName(predictedTeam);
@@ -403,6 +409,7 @@ function buildGameInsightStats(eventRow, prediction, historyMap, oddsRow) {
 				historicalWinLikelihood: strictHistoricalWinLikelihood,
 				modelWinLikelihood: strictModelWinLikelihood,
 				impliedByOdds: strictImpliedByOdds,
+				evPct,
 				predictionOddsText: predictionOddsText || "N/A",
 				homeVenueWinRate: NaN,
 				awayVenueWinRate: NaN,
@@ -458,6 +465,7 @@ function buildGameInsightStats(eventRow, prediction, historyMap, oddsRow) {
 			historicalWinLikelihood: strictHistoricalWinLikelihood,
 			modelWinLikelihood: strictModelWinLikelihood,
 			impliedByOdds: strictImpliedByOdds,
+			evPct,
 			predictionOddsText: predictionOddsText || "N/A",
 			homeVenueWinRate: baselineHomeWinRate,
 			awayVenueWinRate: baselineAwayWinRate,
@@ -560,6 +568,7 @@ function buildGameInsightStats(eventRow, prediction, historyMap, oddsRow) {
 		historicalWinLikelihood: strictHistoricalWinLikelihood,
 		modelWinLikelihood: strictModelWinLikelihood,
 		impliedByOdds: strictImpliedByOdds,
+		evPct,
 		predictionOddsText: predictionOddsText || "N/A",
 		homeVenueWinRate,
 		awayVenueWinRate,
@@ -577,14 +586,16 @@ function buildGameInsightsPanel(eventRow, prediction, historyMap, oddsRow) {
 
 	const stats = buildGameInsightStats(eventRow, prediction, historyMap, oddsRow);
 	if (!stats) {
-		const predictionOddsText = getDisplayOddsForEvent(eventRow, oddsRow, prediction) || "N/A";
-		const predictionOdds = Number(predictionOddsText);
-		const impliedByOdds = Number.isFinite(predictionOdds) && predictionOdds > 1 ? (1 / predictionOdds) : NaN;
+		const marketSnapshot = getPredictionMarketSnapshot(eventRow, oddsRow, prediction);
+		const predictionOddsText = marketSnapshot.oddsText || "N/A";
+		const impliedByOdds = marketSnapshot.impliedProbability;
 		const modelWinLikelihood = Number.isFinite(Number(prediction && prediction.leanPct))
 			? Number(prediction.leanPct) / 100
 			: NaN;
+		const evPct = Number.isFinite(Number(prediction && prediction.evPct)) ? Number(prediction.evPct) : marketSnapshot.evPct;
 		const modelTier = getLikelihoodTierClass(Number(modelWinLikelihood) * 100);
 		const impliedTier = getLikelihoodTierClass(Number(impliedByOdds) * 100);
+		const evTier = getTierClassFromEv(evPct);
 
 		return '<div class="card-insights" aria-hidden="true">'
 			+ '<div class="card-insights-grid">'
@@ -595,6 +606,7 @@ function buildGameInsightsPanel(eventRow, prediction, historyMap, oddsRow) {
 			+ '<div class="card-insights-column right">'
 			+ tooltipPill('Model win: ' + formatPct(modelWinLikelihood), 'Model-estimated win likelihood after conservative weighting.', modelTier)
 			+ tooltipPill('Odds implied: ' + formatPct(impliedByOdds), 'Win likelihood implied by Sportsbet pre-game odds.', impliedTier)
+			+ tooltipPill('EV: ' + formatEvTagText(evPct), EV_TOOLTIP_TEXT, evTier)
 			+ '</div>'
 			+ '</div>'
 			+ '<p class="card-insights-foot">Limited prior-match data for one or both teams, so only market and model signals are shown.</p>'
@@ -607,6 +619,7 @@ function buildGameInsightsPanel(eventRow, prediction, historyMap, oddsRow) {
 	const historyTier = getLikelihoodTierClass(Number(stats.historicalWinLikelihood) * 100);
 	const modelTier = getLikelihoodTierClass(Number(stats.modelWinLikelihood) * 100);
 	const impliedTier = getLikelihoodTierClass(Number(stats.impliedByOdds) * 100);
+	const evTier = getTierClassFromEv(Number(stats.evPct));
 	const homeWinTier = getLikelihoodTierClass(Number(stats.homeWinRate) * 100);
 	const awayWinTier = getLikelihoodTierClass(Number(stats.awayWinRate) * 100);
 
@@ -648,6 +661,7 @@ function buildGameInsightsPanel(eventRow, prediction, historyMap, oddsRow) {
 		tooltipPill('History win: ' + formatPct(stats.historicalWinLikelihood), 'Win likelihood estimated from prior match outcomes and conservative weighting.', historyTier),
 		tooltipPill('Model win: ' + formatPct(stats.modelWinLikelihood), 'Model-estimated win likelihood after strict confidence tightening.', modelTier),
 		tooltipPill('Odds implied: ' + formatPct(stats.impliedByOdds), 'Win likelihood implied by Sportsbet pricing for this event.', impliedTier),
+		tooltipPill('EV: ' + formatEvTagText(Number(stats.evPct)), EV_TOOLTIP_TEXT, evTier),
 		tooltipPill(stats.home + ' win: ' + formatPct(stats.homeWinRate), 'Estimated win probability for ' + stats.home + ' based on recent form and pricing.', homeWinTier),
 		tooltipPill(stats.away + ' win: ' + formatPct(stats.awayWinRate), 'Estimated win probability for ' + stats.away + ' based on recent form and pricing.', awayWinTier),
 		tooltipPill(stats.home + ' score: ' + formatPct(stats.likelyHomeToScore), 'Estimated chance that ' + stats.home + ' scores at least once.', homeScoreTier),
@@ -712,6 +726,28 @@ function bindGameCardInteractions() {
 	el.upcomingWrap.dataset.cardExpandBound = 'true';
 	el.upcomingWrap.addEventListener('click', (event) => {
 		const target = event && event.target ? event.target : null;
+		const viewMoreButton = target && target.closest ? target.closest('[data-action="view-more-upcoming"]') : null;
+		if (viewMoreButton && el.upcomingWrap.contains(viewMoreButton)) {
+			event.preventDefault();
+			handleUpcomingViewMoreClick();
+			return;
+		}
+		const recentViewMoreButton = target && target.closest ? target.closest('[data-action="view-more-recent"]') : null;
+		if (recentViewMoreButton && el.upcomingWrap.contains(recentViewMoreButton)) {
+			event.preventDefault();
+			handleRecentResultsViewMoreClick();
+			return;
+		}
+		const backtestTrendButton = target && target.closest ? target.closest('[data-action="backtest-trend-window"]') : null;
+		if (backtestTrendButton && el.upcomingWrap.contains(backtestTrendButton)) {
+			event.preventDefault();
+			const selectedWindow = Number(backtestTrendButton.getAttribute('data-window'));
+			if (selectedWindow) {
+				setBacktestTrendWindow(selectedWindow);
+				rerenderActiveResultsView();
+			}
+			return;
+		}
 		const card = target && target.closest ? target.closest('.game-card[data-expand-card="true"]') : null;
 		if (!card || !el.upcomingWrap.contains(card)) {
 			return;
@@ -736,6 +772,61 @@ function bindGameCardInteractions() {
 		event.preventDefault();
 		toggleGameCardInsights(target);
 	});
+}
+
+function handleUpcomingViewMoreClick() {
+	const activeData = state.activeUpcomingSportData;
+	if (activeData && activeData.sportKey) {
+		if (normalizeRangeKey(activeData.rangeKey || state.timeRange) !== 'today') {
+			return;
+		}
+		if (activeData.showTomorrow === true) {
+			return;
+		}
+
+		activeData.showTomorrow = true;
+		persistRefreshViewState();
+		renderUpcomingEvents(
+			activeData.sportKey,
+			Array.isArray(activeData.events) ? activeData.events : [],
+			activeData.oddsByEventId || {},
+			activeData.rangeKey || state.timeRange,
+			activeData.historyMap || null,
+			{ showTomorrow: true }
+		);
+		return;
+	}
+
+	if (normalizeRangeKey(state.timeRange) !== 'today' || state.view !== 'upcoming' || state.activeSportKey) {
+		return;
+	}
+	if (state.upcomingSavedSportsShowTomorrow === true) {
+		return;
+	}
+	state.upcomingSavedSportsShowTomorrow = true;
+	persistRefreshViewState();
+	renderUpcomingSportBatch();
+}
+
+function handleRecentResultsViewMoreClick() {
+	if (state.view !== 'recent' || !state.apiKey) {
+		return;
+	}
+	const nextLookbackDays = Math.min(MAX_RECENT_RESULTS_LOOKBACK_DAYS, (Number(state.recentResultsLookbackDays) || RECENT_RESULTS_LOOKBACK_DAYS) + 1);
+	state.recentResultsLookbackDays = nextLookbackDays;
+	persistRefreshViewState();
+	if (state.activeSportKey) {
+		loadRecentResultsForSport(state.activeSportKey, state.apiKey);
+		return;
+	}
+	loadRecentResultsForSelectedScope(state.apiKey);
+}
+
+function getRecentViewMoreMarkup() {
+	const shouldShow = state.view === 'recent' && state.recentResultsLookbackDays < MAX_RECENT_RESULTS_LOOKBACK_DAYS;
+	return shouldShow
+		? '<div class="upcoming-view-more-wrap"><div class="upcoming-separator" aria-hidden="true"></div><button type="button" class="upcoming-view-more-btn" data-action="view-more-recent"><i class="fa-solid fa-angles-down" aria-hidden="true"></i>View More</button></div>'
+		: '';
 }
 
 function getSportsbetBookmakers(oddsRow) {
@@ -796,11 +887,11 @@ function getEligibleSportsbetBookmakersForEvent(oddsRow, eventRow) {
 	const eligible = bookmakers.filter((bookmaker) => {
 		const timestamp = getBookmakerUpdateTimestamp(bookmaker);
 		if (!Number.isFinite(timestamp)) {
-			return true;
+			return false;
 		}
 		return timestamp <= snapshotCutoff;
 	});
-	return eligible.length ? eligible : bookmakers;
+	return eligible;
 }
 
 function isDrawOutcomeName(value) {
@@ -912,21 +1003,243 @@ function getDisplayOddsForEvent(eventRow, oddsRow, prediction = null) {
 	return getBestAvailableOddsForEvent(eventRow, oddsRow);
 }
 
+function getImpliedProbabilityFromOdds(oddsValue) {
+	const odds = Number(oddsValue);
+	if (!Number.isFinite(odds) || odds <= 1) {
+		return NaN;
+	}
+	return 1 / odds;
+}
+
+function getExpectedValuePct(modelProbability, oddsValue) {
+	const probability = Number(modelProbability);
+	const odds = Number(oddsValue);
+	if (!Number.isFinite(probability) || !Number.isFinite(odds) || odds <= 1) {
+		return NaN;
+	}
+	return ((probability * odds) - 1) * 100;
+}
+
+function getPredictionMarketSnapshot(eventRow, oddsRow, prediction) {
+	if (!prediction || !prediction.predictedTeam) {
+		return {
+			oddsText: null,
+			oddsValue: NaN,
+			impliedProbability: NaN,
+			evPct: NaN,
+			edgePct: NaN
+		};
+	}
+
+	const storedOdds = Number(prediction && prediction.pregameOdds);
+	const oddsText = Number.isFinite(storedOdds) && storedOdds > 1
+		? storedOdds.toFixed(2)
+		: getBookmakerOddsForPrediction(eventRow, oddsRow, prediction);
+	const oddsValue = Number(oddsText);
+	const impliedProbability = getImpliedProbabilityFromOdds(oddsValue);
+	const modelProbability = Number(prediction && prediction.leanPct) / 100;
+	const evPct = getExpectedValuePct(modelProbability, oddsValue);
+	const edgePct = Number.isFinite(modelProbability) && Number.isFinite(impliedProbability)
+		? (modelProbability - impliedProbability) * 100
+		: NaN;
+
+	return {
+		oddsText,
+		oddsValue,
+		impliedProbability,
+		evPct,
+		edgePct
+	};
+}
+
+function enrichPredictionWithMarketMetrics(eventRow, oddsRow, prediction) {
+	if (!prediction || typeof prediction !== 'object') {
+		return prediction;
+	}
+	const marketSnapshot = getPredictionMarketSnapshot(eventRow, oddsRow, prediction);
+	const nextPrediction = {
+		...prediction,
+		pregameOdds: Number.isFinite(marketSnapshot.oddsValue) ? Number(marketSnapshot.oddsValue.toFixed(2)) : null,
+		impliedProbPct: Number.isFinite(marketSnapshot.impliedProbability) ? Number((marketSnapshot.impliedProbability * 100).toFixed(1)) : null,
+		evPct: Number.isFinite(marketSnapshot.evPct) ? Number(marketSnapshot.evPct.toFixed(1)) : null
+	};
+	if (Number.isFinite(marketSnapshot.edgePct)) {
+		nextPrediction.edgePct = Number(marketSnapshot.edgePct.toFixed(1));
+	}
+	return nextPrediction;
+}
+
+function getNumericScoreValue(source) {
+	if (source == null) {
+		return NaN;
+	}
+	if (typeof source === 'object') {
+		const nestedValue = source.score ?? source.points ?? source.value ?? source.total ?? source.goals ?? source.count ?? source.runs ?? source.sets ?? source.games ?? source.periodScore;
+		const parsedNested = Number(nestedValue);
+		return Number.isFinite(parsedNested) ? parsedNested : NaN;
+	}
+	const parsed = Number(source);
+	return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function parseScorePairFromText(source) {
+	const text = String(source || '').trim();
+	if (!text) {
+		return null;
+	}
+	const match = text.match(/(\d+)\s*[-:\u2013\u2014]\s*(\d+)/);
+	if (!match) {
+		return null;
+	}
+	const homeScore = Number(match[1]);
+	const awayScore = Number(match[2]);
+	if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) {
+		return null;
+	}
+	return { homeScore, awayScore };
+}
+
+function getLiveScoreFallbackText(eventRow) {
+	if (!eventRow || typeof eventRow !== 'object') {
+		return '';
+	}
+	const status = String(eventRow.status || eventRow.game_status || eventRow.state || eventRow.live_status || '').trim();
+	if (status) {
+		return status;
+	}
+	const period = eventRow.period || eventRow.current_period || eventRow.quarter || eventRow.inning || eventRow.set || eventRow.leg;
+	if (period == null || period === '') {
+		return 'Live';
+	}
+	const clock = eventRow.clock || eventRow.time_remaining || eventRow.timeRemaining || eventRow.remaining || eventRow.match_clock;
+	const periodText = String(period).trim();
+	const clockText = String(clock || '').trim();
+	if (periodText && clockText) {
+		return 'Live · ' + periodText + ' ' + clockText;
+	}
+	if (periodText) {
+		return 'Live · ' + periodText;
+	}
+	if (clockText) {
+		return 'Live · ' + clockText;
+	}
+	return 'Live';
+}
+
+function extractEventScores(eventRow) {
+	let homeScore = NaN;
+	let awayScore = NaN;
+	if (!eventRow || typeof eventRow !== 'object') {
+		return { homeScore, awayScore };
+	}
+
+	const home = eventRow.home_team ? String(eventRow.home_team) : 'Home';
+	const away = eventRow.away_team ? String(eventRow.away_team) : 'Away';
+	const homeNorm = normalizeTeamName(home);
+	const awayNorm = normalizeTeamName(away);
+
+	const scoreEntries = Array.isArray(eventRow.scores) ? eventRow.scores : [];
+	for (const scoreRow of scoreEntries) {
+		const teamName = normalizeTeamName(scoreRow && (scoreRow.name ?? scoreRow.team ?? scoreRow.team_name ?? scoreRow.participant) ? (scoreRow.name ?? scoreRow.team ?? scoreRow.team_name ?? scoreRow.participant) : '');
+		const parsedScore = getNumericScoreValue(scoreRow);
+		if (!Number.isFinite(parsedScore)) {
+			continue;
+		}
+		if (teamName === homeNorm) {
+			homeScore = parsedScore;
+		}
+		if (teamName === awayNorm) {
+			awayScore = parsedScore;
+		}
+	}
+
+	if ((!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) && scoreEntries.length >= 2) {
+		const firstScore = getNumericScoreValue(scoreEntries[0]);
+		const secondScore = getNumericScoreValue(scoreEntries[1]);
+		if (!Number.isFinite(homeScore) && Number.isFinite(firstScore)) {
+			homeScore = firstScore;
+		}
+		if (!Number.isFinite(awayScore) && Number.isFinite(secondScore)) {
+			awayScore = secondScore;
+		}
+	}
+
+	const scoreObject = eventRow.score && typeof eventRow.score === 'object' ? eventRow.score : null;
+	const nonArrayScores = eventRow.scores && !Array.isArray(eventRow.scores) && typeof eventRow.scores === 'object' ? eventRow.scores : null;
+	const flatHomeScore = getNumericScoreValue(
+		eventRow.home_score
+		?? eventRow.homeScore
+		?? eventRow.home_goals
+		?? eventRow.homeGoals
+		?? eventRow.home_points
+		?? eventRow.homePoints
+		?? (scoreObject ? (scoreObject.home ?? scoreObject.home_score ?? scoreObject.homeScore ?? scoreObject.home_points ?? scoreObject.homePoints) : undefined)
+		?? (nonArrayScores ? (nonArrayScores.home ?? nonArrayScores.home_score ?? nonArrayScores.homeScore ?? nonArrayScores.home_points ?? nonArrayScores.homePoints) : undefined)
+	);
+	const flatAwayScore = getNumericScoreValue(
+		eventRow.away_score
+		?? eventRow.awayScore
+		?? eventRow.away_goals
+		?? eventRow.awayGoals
+		?? eventRow.away_points
+		?? eventRow.awayPoints
+		?? (scoreObject ? (scoreObject.away ?? scoreObject.away_score ?? scoreObject.awayScore ?? scoreObject.away_points ?? scoreObject.awayPoints) : undefined)
+		?? (nonArrayScores ? (nonArrayScores.away ?? nonArrayScores.away_score ?? nonArrayScores.awayScore ?? nonArrayScores.away_points ?? nonArrayScores.awayPoints) : undefined)
+	);
+
+	if (!Number.isFinite(homeScore) && Number.isFinite(flatHomeScore)) {
+		homeScore = flatHomeScore;
+	}
+	if (!Number.isFinite(awayScore) && Number.isFinite(flatAwayScore)) {
+		awayScore = flatAwayScore;
+	}
+
+	if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) {
+		const pairCandidates = [
+			eventRow.score,
+			eventRow.scores,
+			eventRow.score_text,
+			eventRow.scoreText,
+			eventRow.display_score,
+			eventRow.displayScore,
+			eventRow.result,
+			eventRow.summary
+		];
+		for (const candidate of pairCandidates) {
+			if (typeof candidate !== 'string') {
+				continue;
+			}
+			const parsedPair = parseScorePairFromText(candidate);
+			if (!parsedPair) {
+				continue;
+			}
+			if (!Number.isFinite(homeScore)) {
+				homeScore = parsedPair.homeScore;
+			}
+			if (!Number.isFinite(awayScore)) {
+				awayScore = parsedPair.awayScore;
+			}
+			if (Number.isFinite(homeScore) && Number.isFinite(awayScore)) {
+				break;
+			}
+		}
+	}
+
+	return { homeScore, awayScore };
+}
+
 function hasUsableScoreData(eventRow) {
 	if (!eventRow) {
 		return false;
 	}
-
-	const scoreEntries = Array.isArray(eventRow.scores) ? eventRow.scores : [];
-	if (scoreEntries.length >= 2) {
+	const scores = extractEventScores(eventRow);
+	if (Number.isFinite(scores.homeScore) && Number.isFinite(scores.awayScore)) {
 		return true;
 	}
-
-	const homeTeam = eventRow.home_team ? String(eventRow.home_team).trim() : "";
-	const awayTeam = eventRow.away_team ? String(eventRow.away_team).trim() : "";
-	const homeScore = Number(eventRow && (eventRow.home_score ?? eventRow.homeScore ?? eventRow.home_goals ?? eventRow.homeGoals));
-	const awayScore = Number(eventRow && (eventRow.away_score ?? eventRow.awayScore ?? eventRow.away_goals ?? eventRow.awayGoals));
-	return Boolean(homeTeam && awayTeam && Number.isFinite(homeScore) && Number.isFinite(awayScore));
+	if (isLiveEventRow(eventRow)) {
+		return Boolean(getLiveScoreFallbackText(eventRow));
+	}
+	return false;
 }
 
 function getPredictionResultForCompletedEvent(eventRow, predictedTeam) {
@@ -940,21 +1253,9 @@ function getPredictionResultForCompletedEvent(eventRow, predictedTeam) {
 	const awayNorm = normalizeTeamName(away);
 	const predictedNorm = normalizeTeamName(predictedTeam || "");
 
-	let homeScore = NaN;
-	let awayScore = NaN;
-	for (const scoreRow of eventRow.scores) {
-		const teamName = normalizeTeamName(scoreRow && scoreRow.name ? scoreRow.name : "");
-		const parsedScore = Number(scoreRow && scoreRow.score);
-		if (!Number.isFinite(parsedScore)) {
-			continue;
-		}
-		if (teamName === homeNorm) {
-			homeScore = parsedScore;
-		}
-		if (teamName === awayNorm) {
-			awayScore = parsedScore;
-		}
-	}
+	const scores = extractEventScores(eventRow);
+	const homeScore = scores.homeScore;
+	const awayScore = scores.awayScore;
 
 	if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) {
 		return { label: "Unknown", tierClass: "tier-orange" };
@@ -993,33 +1294,9 @@ function getLivePredictionStatus(eventRow, predictedTeam) {
 	const awayNorm = normalizeTeamName(away);
 	const predictedNorm = normalizeTeamName(predictedTeam || "");
 
-	let homeScore = NaN;
-	let awayScore = NaN;
-	if (Array.isArray(eventRow.scores) && eventRow.scores.length) {
-		for (const scoreRow of eventRow.scores) {
-			const teamName = normalizeTeamName(scoreRow && scoreRow.name ? scoreRow.name : "");
-			const parsedScore = Number(scoreRow && scoreRow.score);
-			if (!Number.isFinite(parsedScore)) {
-				continue;
-			}
-			if (teamName === homeNorm) {
-				homeScore = parsedScore;
-			}
-			if (teamName === awayNorm) {
-				awayScore = parsedScore;
-			}
-		}
-	}
-	if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) {
-		const flatHomeScore = Number(eventRow && (eventRow.home_score ?? eventRow.homeScore ?? eventRow.home_goals ?? eventRow.homeGoals));
-		const flatAwayScore = Number(eventRow && (eventRow.away_score ?? eventRow.awayScore ?? eventRow.away_goals ?? eventRow.awayGoals));
-		if (Number.isFinite(flatHomeScore)) {
-			homeScore = flatHomeScore;
-		}
-		if (Number.isFinite(flatAwayScore)) {
-			awayScore = flatAwayScore;
-		}
-	}
+	const scores = extractEventScores(eventRow);
+	const homeScore = scores.homeScore;
+	const awayScore = scores.awayScore;
 	if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore) || homeScore === awayScore) {
 		return null;
 	}
@@ -1028,41 +1305,16 @@ function getLivePredictionStatus(eventRow, predictedTeam) {
 }
 
 function getEventScoreText(eventRow) {
-	if (!hasUsableScoreData(eventRow)) {
-		return "No usable score data";
+	const scores = extractEventScores(eventRow);
+	const homeScore = Number.isFinite(scores.homeScore) ? String(scores.homeScore) : "-";
+	const awayScore = Number.isFinite(scores.awayScore) ? String(scores.awayScore) : "-";
+	if (Number.isFinite(scores.homeScore) || Number.isFinite(scores.awayScore)) {
+		return homeScore + " - " + awayScore;
 	}
-	const home = eventRow.home_team ? String(eventRow.home_team) : "Home";
-	const away = eventRow.away_team ? String(eventRow.away_team) : "Away";
-	const homeNorm = normalizeTeamName(home);
-	const awayNorm = normalizeTeamName(away);
-
-	let homeScore = "-";
-	let awayScore = "-";
-	if (Array.isArray(eventRow.scores) && eventRow.scores.length) {
-		for (const scoreRow of eventRow.scores) {
-			const nameNorm = normalizeTeamName(scoreRow && scoreRow.name ? scoreRow.name : "");
-			const scoreValue = scoreRow && scoreRow.score != null ? String(scoreRow.score) : "-";
-			if (nameNorm === homeNorm) {
-				homeScore = scoreValue;
-			}
-			if (nameNorm === awayNorm) {
-				awayScore = scoreValue;
-			}
-		}
+	if (isLiveEventRow(eventRow)) {
+		return getLiveScoreFallbackText(eventRow);
 	}
-
-	if (homeScore === "-" || awayScore === "-") {
-		const flatHomeScore = Number(eventRow && (eventRow.home_score ?? eventRow.homeScore ?? eventRow.home_goals ?? eventRow.homeGoals));
-		const flatAwayScore = Number(eventRow && (eventRow.away_score ?? eventRow.awayScore ?? eventRow.away_goals ?? eventRow.awayGoals));
-		if (Number.isFinite(flatHomeScore)) {
-			homeScore = String(flatHomeScore);
-		}
-		if (Number.isFinite(flatAwayScore)) {
-			awayScore = String(flatAwayScore);
-		}
-	}
-
-	return homeScore + " - " + awayScore;
+	return "No score data";
 }
 
 function getStdDev(values) {
@@ -1115,7 +1367,7 @@ function getScoreLookupFromRow(row) {
 }
 
 function buildConsensusProbabilities(eventRow, oddsRow) {
-	const sportsbetBookmakers = getSportsbetBookmakers(oddsRow);
+	const sportsbetBookmakers = getEligibleSportsbetBookmakersForEvent(oddsRow, eventRow);
 	if (!sportsbetBookmakers.length) {
 		return null;
 	}
@@ -1206,7 +1458,26 @@ function buildTeamHistoryMap(scoresRows) {
 		return historyMap;
 	}
 
-	for (const row of scoresRows) {
+	const orderedRows = scoresRows
+		.slice()
+		.filter((row) => row && typeof row === 'object')
+		.sort((a, b) => {
+			const aTs = getRowTimestamp(a);
+			const bTs = getRowTimestamp(b);
+			if (!Number.isFinite(aTs) && !Number.isFinite(bTs)) {
+				return 0;
+			}
+			if (!Number.isFinite(aTs)) {
+				return 1;
+			}
+			if (!Number.isFinite(bTs)) {
+				return -1;
+			}
+			return bTs - aTs;
+		});
+
+	for (let index = 0; index < orderedRows.length; index += 1) {
+		const row = orderedRows[index];
 		if (!row) {
 			continue;
 		}
@@ -1226,6 +1497,8 @@ function buildTeamHistoryMap(scoresRows) {
 		if (!Number.isFinite(homeGoals) || !Number.isFinite(awayGoals)) {
 			continue;
 		}
+
+		const recencyWeight = Math.pow(HISTORY_RECENT_FORM_DECAY, index);
 
 		for (const [teamName, teamGoals] of [[homeNorm, homeGoals], [awayNorm, awayGoals]]) {
 			const profile = historyMap[teamName] || {
@@ -1269,27 +1542,27 @@ function buildTeamHistoryMap(scoresRows) {
 					profile.wins += 1;
 					profile.homeWins += 1;
 					profile.points += 3;
-					profile.recentForm += 3;
+					profile.recentForm += 3 * recencyWeight;
 				} else if (homeGoals < awayGoals) {
 					profile.losses += 1;
-					profile.recentForm -= 2;
+					profile.recentForm -= 2 * recencyWeight;
 				} else {
 					profile.draws += 1;
 					profile.points += 1;
-					profile.recentForm += 1;
+					profile.recentForm += 1 * recencyWeight;
 				}
 			} else if (awayGoals > homeGoals) {
 				profile.wins += 1;
 				profile.awayWins += 1;
 				profile.points += 3;
-				profile.recentForm += 3;
+				profile.recentForm += 3 * recencyWeight;
 			} else if (awayGoals < homeGoals) {
 				profile.losses += 1;
-				profile.recentForm -= 2;
+				profile.recentForm -= 2 * recencyWeight;
 			} else {
 				profile.draws += 1;
 				profile.points += 1;
-				profile.recentForm += 1;
+				profile.recentForm += 1 * recencyWeight;
 			}
 
 			historyMap[teamName] = profile;
@@ -1323,10 +1596,47 @@ function buildPriorHistoryMapForEvent(scoreRows, eventRow) {
 	return buildTeamHistoryMap(priorRows);
 }
 
-function getHistoricalPredictionForEvent(eventRow, historyMap) {
+function normalizePredictedTeamForSport(predictedTeam, home, away, profile) {
+	const raw = String(predictedTeam || '').trim();
+	if (!raw) {
+		return raw;
+	}
+	if (normalizeTeamName(raw) !== 'draw') {
+		return raw;
+	}
+	if (profile && profile.allowDraw) {
+		return 'Draw';
+	}
+	const homeLabel = String(home || '').trim();
+	const awayLabel = String(away || '').trim();
+	if (homeLabel && awayLabel) {
+		return homeLabel.localeCompare(awayLabel, undefined, { sensitivity: 'base' }) <= 0 ? homeLabel : awayLabel;
+	}
+	return homeLabel || awayLabel || raw;
+}
+
+function normalizePredictionForSport(prediction, home, away, profile) {
+	if (!prediction || typeof prediction !== 'object') {
+		return prediction;
+	}
+	const normalizedTeam = normalizePredictedTeamForSport(prediction.predictedTeam, home, away, profile);
+	const normalizedLabel = normalizedTeam === 'Draw'
+		? 'Prediction: Draw'
+		: normalizedTeam
+			? 'Prediction: ' + normalizedTeam + ' to win'
+			: 'No prediction';
+	return {
+		...prediction,
+		predictedTeam: normalizedTeam,
+		label: normalizedLabel
+	};
+}
+
+function getHistoricalPredictionForEvent(eventRow, historyMap, modelProfile = null) {
 	if (!eventRow || !historyMap) {
 		return null;
 	}
+	const profile = modelProfile || getSportModelProfile('');
 
 	const home = eventRow && eventRow.home_team ? String(eventRow.home_team) : "Home";
 	const away = eventRow && eventRow.away_team ? String(eventRow.away_team) : "Away";
@@ -1370,10 +1680,11 @@ function getHistoricalPredictionForEvent(eventRow, historyMap) {
 		const scoreDiff = homeRating - awayRating;
 		const absDiff = Math.abs(scoreDiff);
 
-		let predictedTeam = "Draw";
+		let predictedTeam = profile.allowDraw ? "Draw" : home;
 		if (absDiff >= 0.14) {
 			predictedTeam = scoreDiff >= 0 ? home : away;
 		}
+		predictedTeam = normalizePredictedTeamForSport(predictedTeam, home, away, profile);
 
 		const leanPct = predictedTeam === "Draw"
 			? clampNumber(50.2 + (absDiff * 7), 50.2, 54.8)
@@ -1414,10 +1725,13 @@ function getHistoricalPredictionForEvent(eventRow, historyMap) {
 		leanPct = clampNumber(51 + (Math.abs(scoreDiff) * 7), 51, 57);
 		confidence = leanPct >= 57 ? "very high" : leanPct >= 54 ? "high" : leanPct >= 52 ? "average" : leanPct >= 51 ? "low" : "very low";
 	} else {
-		predictedTeam = "Draw";
-		leanPct = clampNumber(50 + Math.abs(scoreDiff) * 5, 50, 55);
+		predictedTeam = profile.allowDraw ? "Draw" : (scoreDiff >= 0 ? home : away);
+		leanPct = profile.allowDraw
+			? clampNumber(50 + Math.abs(scoreDiff) * 5, 50, 55)
+			: clampNumber(50.6 + Math.abs(scoreDiff) * 4.2, 50.6, 55.4);
 		confidence = leanPct >= 53 ? "average" : leanPct >= 51 ? "low" : "very low";
 	}
+	predictedTeam = normalizePredictedTeamForSport(predictedTeam, home, away, profile);
 
 	const edgePct = Math.max(2.2, Math.min(8, Math.abs(scoreDiff) * 8));
 	const label = predictedTeam === "Draw" ? "Prediction: Draw" : "Prediction: " + predictedTeam + " to win";
@@ -1450,6 +1764,85 @@ function getSportSuggestionType(sportKey) {
 		return "football";
 	}
 	return "default";
+}
+
+function doesSportAllowDraw(sportKey) {
+	const normalized = String(sportKey || '').toLowerCase();
+	if (!normalized) {
+		return false;
+	}
+	return normalized.includes('soccer');
+}
+
+function resolveSportKeyForPrediction(eventRow, sportKey = '', oddsRow = null) {
+	const direct = String(sportKey || '').trim();
+	if (direct) {
+		return direct;
+	}
+	const fromEvent = String(eventRow && eventRow.sport_key ? eventRow.sport_key : '').trim();
+	if (fromEvent) {
+		return fromEvent;
+	}
+	const fromOdds = String(oddsRow && oddsRow.sport_key ? oddsRow.sport_key : '').trim();
+	return fromOdds;
+}
+
+function getSportModelProfile(sportKey) {
+	const sportType = getSportSuggestionType(sportKey);
+	const allowDraw = doesSportAllowDraw(sportKey);
+	if (sportType === 'tennis') {
+		return {
+			allowDraw,
+			historyReliabilityDivisor: 16,
+			historyReliabilitySingleDivisor: 22,
+			marketTrustBias: 0.72,
+			drawSeedBase: 0,
+			drawFloor: 0,
+			drawCap: 0
+		};
+	}
+	if (sportType === 'basketball' || sportType === 'baseball') {
+		return {
+			allowDraw,
+			historyReliabilityDivisor: 18,
+			historyReliabilitySingleDivisor: 24,
+			marketTrustBias: 0.68,
+			drawSeedBase: 0,
+			drawFloor: 0,
+			drawCap: 0
+		};
+	}
+	if (sportType === 'hockey') {
+		return {
+			allowDraw,
+			historyReliabilityDivisor: 18,
+			historyReliabilitySingleDivisor: 24,
+			marketTrustBias: 0.63,
+			drawSeedBase: 0.02,
+			drawFloor: 0,
+			drawCap: 0.06
+		};
+	}
+	if (sportType === 'football') {
+		return {
+			allowDraw,
+			historyReliabilityDivisor: 18,
+			historyReliabilitySingleDivisor: 24,
+			marketTrustBias: 0.62,
+			drawSeedBase: 0.2,
+			drawFloor: 0.07,
+			drawCap: 0.2
+		};
+	}
+	return {
+		allowDraw,
+		historyReliabilityDivisor: 18,
+		historyReliabilitySingleDivisor: 24,
+		marketTrustBias: 0.65,
+		drawSeedBase: 0.16,
+		drawFloor: 0.05,
+		drawCap: 0.16
+	};
 }
 
 function buildTopBetSuggestions(eventRow, prediction, sportKey = "") {
@@ -1593,45 +1986,154 @@ function getDeterministicFallbackPrediction(eventRow, sportKey = "") {
 	};
 }
 
-function getPredictionForEvent(eventRow, oddsRow, historyMap = null, sportKey = "") {
-	const lockedPrediction = getLockedPregamePrediction(eventRow, sportKey);
-	if (lockedPrediction && lockedPrediction.predictedTeam) {
+function getHistoryReliabilityForEvent(eventRow, historyMap, sportKey = "") {
+	if (!eventRow || !historyMap || typeof historyMap !== 'object') {
+		return 0;
+	}
+	const profile = getSportModelProfile(sportKey);
+	const homeNorm = normalizeTeamName(eventRow && eventRow.home_team ? eventRow.home_team : '');
+	const awayNorm = normalizeTeamName(eventRow && eventRow.away_team ? eventRow.away_team : '');
+	const homeStats = historyMap[homeNorm];
+	const awayStats = historyMap[awayNorm];
+	const homeMatches = Number(homeStats && homeStats.matches);
+	const awayMatches = Number(awayStats && awayStats.matches);
+	const hasHome = Number.isFinite(homeMatches) && homeMatches > 0;
+	const hasAway = Number.isFinite(awayMatches) && awayMatches > 0;
+	if (!hasHome && !hasAway) {
+		return 0;
+	}
+	if (hasHome && hasAway) {
+		const minSample = Math.min(homeMatches, awayMatches);
+		return clampNumber((minSample - 1) / Number(profile.historyReliabilityDivisor || 18), 0.12, 0.9);
+	}
+	const singleSample = hasHome ? homeMatches : awayMatches;
+	return clampNumber((singleSample - 1) / Number(profile.historyReliabilitySingleDivisor || 24), 0.08, 0.55);
+}
+
+function buildHistoryProbabilitiesFromPrediction(eventRow, historyPrediction, historyMap, sportKey = "") {
+	if (!eventRow || !historyPrediction || !historyPrediction.predictedTeam) {
+		return null;
+	}
+	const profile = getSportModelProfile(sportKey);
+	const home = eventRow && eventRow.home_team ? String(eventRow.home_team) : 'Home';
+	const away = eventRow && eventRow.away_team ? String(eventRow.away_team) : 'Away';
+	const predicted = String(historyPrediction.predictedTeam || '');
+	const lean = Number(historyPrediction.leanPct);
+	if (!Number.isFinite(lean)) {
+		return null;
+	}
+
+	const drawSeed = profile.allowDraw
+		? clampNumber(Number(profile.drawSeedBase || 0.16) - Math.max(0, (lean - 50)) / 35, Number(profile.drawFloor || 0.05), Number(profile.drawCap || 0.16))
+		: 0;
+	if (predicted === 'Draw') {
+		const drawProb = profile.allowDraw ? clampNumber(lean / 100, 0.32, 0.6) : 0;
+		const nonDraw = 1 - drawProb;
 		return {
-			...lockedPrediction,
-			topBets: buildTopBetSuggestions(eventRow, lockedPrediction, sportKey)
+			home: nonDraw / 2,
+			away: nonDraw / 2,
+			draw: drawProb
 		};
 	}
 
+	const predictedProb = clampNumber(lean / 100, 0.5, 0.78);
+	const remainder = Math.max(0.01, 1 - predictedProb);
+	const drawProb = profile.allowDraw ? Math.min(drawSeed, remainder * 0.52) : 0;
+	const opponentProb = Math.max(0.01, remainder - drawProb);
+	if (predicted === home) {
+		return {
+			home: predictedProb,
+			away: opponentProb,
+			draw: drawProb
+		};
+	}
+	if (predicted === away) {
+		return {
+			home: opponentProb,
+			away: predictedProb,
+			draw: drawProb
+		};
+	}
+
+	const historyReliability = getHistoryReliabilityForEvent(eventRow, historyMap, sportKey);
+	const balancedProb = clampNumber(0.5 + ((lean - 50) / 100) * (0.4 + (historyReliability * 0.4)), 0.46, 0.65);
+	const drawProbFallback = profile.allowDraw ? clampNumber(drawSeed, Number(profile.drawFloor || 0.05), Number(profile.drawCap || 0.16)) : 0;
+	const sideProb = (1 - drawProbFallback) / 2;
+	return {
+		home: sideProb,
+		away: sideProb,
+		draw: drawProbFallback,
+		preferred: balancedProb
+	};
+}
+
+function normalizeOutcomeProbabilities(probabilities) {
+	if (!probabilities || typeof probabilities !== 'object') {
+		return null;
+	}
+	const home = Number(probabilities.home);
+	const away = Number(probabilities.away);
+	const draw = Number(probabilities.draw);
+	if (!Number.isFinite(home) || !Number.isFinite(away) || !Number.isFinite(draw)) {
+		return null;
+	}
+	const total = home + away + draw;
+	if (!Number.isFinite(total) || total <= 0) {
+		return null;
+	}
+	return {
+		home: home / total,
+		away: away / total,
+		draw: draw / total
+	};
+}
+
+function getPredictionForEvent(eventRow, oddsRow, historyMap = null, sportKey = "") {
+	const resolvedSportKey = resolveSportKeyForPrediction(eventRow, sportKey, oddsRow);
 	const home = eventRow && eventRow.home_team ? String(eventRow.home_team) : "Home";
 	const away = eventRow && eventRow.away_team ? String(eventRow.away_team) : "Away";
+	const modelProfile = getSportModelProfile(resolvedSportKey);
+	const lockedPrediction = getLockedPregamePrediction(eventRow, resolvedSportKey);
+	if (lockedPrediction && lockedPrediction.predictedTeam) {
+		const normalizedLockedPrediction = normalizePredictionForSport(lockedPrediction, home, away, modelProfile);
+		const enrichedLockedPrediction = enrichPredictionWithMarketMetrics(eventRow, oddsRow, normalizedLockedPrediction);
+		return {
+			...enrichedLockedPrediction,
+			topBets: buildTopBetSuggestions(eventRow, enrichedLockedPrediction, resolvedSportKey)
+		};
+	}
+
 	const effectiveHistoryMap = Array.isArray(historyMap)
 		? buildPriorHistoryMapForEvent(historyMap, eventRow)
 		: historyMap;
-	const historyPrediction = getHistoricalPredictionForEvent(eventRow, effectiveHistoryMap);
-	if (historyPrediction) {
-		capturePregamePredictionSnapshot(eventRow, historyPrediction, sportKey);
+	const historyStatsMap = Array.isArray(historyMap)
+		? effectiveHistoryMap
+		: getFullHistoryMapForPrediction(historyMap);
+	const historyPrediction = getHistoricalPredictionForEvent(eventRow, effectiveHistoryMap, modelProfile)
+		|| (!Array.isArray(historyMap) ? getHistoricalPredictionForEvent(eventRow, historyStatsMap, modelProfile) : null);
+	const historyProbabilities = normalizeOutcomeProbabilities(buildHistoryProbabilitiesFromPrediction(eventRow, historyPrediction, historyStatsMap, resolvedSportKey));
+	const historyReliability = getHistoryReliabilityForEvent(eventRow, historyStatsMap, resolvedSportKey);
+
+	const hasMarketData = Boolean(oddsRow && getEligibleSportsbetBookmakersForEvent(oddsRow, eventRow).length);
+	if (!hasMarketData && historyPrediction) {
+		const normalizedHistoryPrediction = normalizePredictionForSport(historyPrediction, home, away, modelProfile);
+		const enrichedHistoryPrediction = enrichPredictionWithMarketMetrics(eventRow, oddsRow, normalizedHistoryPrediction);
+		capturePregamePredictionSnapshot(eventRow, enrichedHistoryPrediction, resolvedSportKey);
 		return {
-			...historyPrediction,
-			topBets: buildTopBetSuggestions(eventRow, historyPrediction, sportKey)
+			...enrichedHistoryPrediction,
+			topBets: buildTopBetSuggestions(eventRow, enrichedHistoryPrediction, resolvedSportKey)
 		};
 	}
 
-	const fullHistoryPrediction = getHistoricalPredictionForEvent(eventRow, getFullHistoryMapForPrediction(historyMap));
-	if (fullHistoryPrediction) {
-		capturePregamePredictionSnapshot(eventRow, fullHistoryPrediction, sportKey);
-		return {
-			...fullHistoryPrediction,
-			topBets: buildTopBetSuggestions(eventRow, fullHistoryPrediction, sportKey)
-		};
-	}
-
-	if (!oddsRow || !getSportsbetBookmakers(oddsRow).length) {
-		const fallbackPrediction = getDeterministicFallbackPrediction(eventRow, sportKey);
+	if (!hasMarketData) {
+		const fallbackPrediction = getDeterministicFallbackPrediction(eventRow, resolvedSportKey);
 		if (fallbackPrediction) {
-			capturePregamePredictionSnapshot(eventRow, fallbackPrediction, sportKey);
+			const normalizedFallbackPrediction = normalizePredictionForSport(fallbackPrediction, home, away, modelProfile);
+			const enrichedFallbackPrediction = enrichPredictionWithMarketMetrics(eventRow, oddsRow, normalizedFallbackPrediction);
+			capturePregamePredictionSnapshot(eventRow, enrichedFallbackPrediction, resolvedSportKey);
 			return {
-				...fallbackPrediction,
-				topBets: buildTopBetSuggestions(eventRow, fallbackPrediction, sportKey)
+				...enrichedFallbackPrediction,
+				topBets: buildTopBetSuggestions(eventRow, enrichedFallbackPrediction, resolvedSportKey)
 			};
 		}
 		return {
@@ -1647,12 +2149,23 @@ function getPredictionForEvent(eventRow, oddsRow, historyMap = null, sportKey = 
 
 	const consensus = buildConsensusProbabilities(eventRow, oddsRow);
 	if (!consensus) {
-		const fallbackPrediction = getDeterministicFallbackPrediction(eventRow, sportKey);
-		if (fallbackPrediction) {
-			capturePregamePredictionSnapshot(eventRow, fallbackPrediction, sportKey);
+		if (historyPrediction) {
+			const normalizedHistoryPrediction = normalizePredictionForSport(historyPrediction, home, away, modelProfile);
+			const enrichedHistoryPrediction = enrichPredictionWithMarketMetrics(eventRow, oddsRow, normalizedHistoryPrediction);
+			capturePregamePredictionSnapshot(eventRow, enrichedHistoryPrediction, resolvedSportKey);
 			return {
-				...fallbackPrediction,
-				topBets: buildTopBetSuggestions(eventRow, fallbackPrediction, sportKey)
+				...enrichedHistoryPrediction,
+				topBets: buildTopBetSuggestions(eventRow, enrichedHistoryPrediction, resolvedSportKey)
+			};
+		}
+		const fallbackPrediction = getDeterministicFallbackPrediction(eventRow, resolvedSportKey);
+		if (fallbackPrediction) {
+			const normalizedFallbackPrediction = normalizePredictionForSport(fallbackPrediction, home, away, modelProfile);
+			const enrichedFallbackPrediction = enrichPredictionWithMarketMetrics(eventRow, oddsRow, normalizedFallbackPrediction);
+			capturePregamePredictionSnapshot(eventRow, enrichedFallbackPrediction, resolvedSportKey);
+			return {
+				...enrichedFallbackPrediction,
+				topBets: buildTopBetSuggestions(eventRow, enrichedFallbackPrediction, resolvedSportKey)
 			};
 		}
 		return {
@@ -1666,24 +2179,98 @@ function getPredictionForEvent(eventRow, oddsRow, historyMap = null, sportKey = 
 		};
 	}
 
+	const marketReliabilityBase = clampNumber((Number(consensus.sampleSize) - 1) / 5, 0.28, 0.9);
+	const marketAgreementPenalty = clampNumber(Number(consensus.agreementStdDev) / 0.18, 0, 0.45);
+	const marketReliability = clampNumber(marketReliabilityBase * (1 - marketAgreementPenalty), 0.18, 0.9);
+	const historyWeightRaw = historyProbabilities ? historyReliability : 0;
+	const marketWeightRaw = marketReliability * Number(modelProfile.marketTrustBias || 0.65);
+	const totalWeight = Math.max(0.0001, historyWeightRaw + marketWeightRaw);
+	const marketWeight = marketWeightRaw / totalWeight;
+	const historyWeight = historyWeightRaw / totalWeight;
+
+	const blendedProbabilities = historyProbabilities
+		? {
+			home: (consensus.home * marketWeight) + (historyProbabilities.home * historyWeight),
+			away: (consensus.away * marketWeight) + (historyProbabilities.away * historyWeight),
+			draw: (consensus.draw * marketWeight) + (historyProbabilities.draw * historyWeight)
+		}
+		: {
+			home: consensus.home,
+			away: consensus.away,
+			draw: consensus.draw
+		};
+
+	const calibratedBlend = normalizeOutcomeProbabilities(blendedProbabilities) || {
+		home: consensus.home,
+		away: consensus.away,
+		draw: consensus.draw
+	};
+
 	const outcomes = [
-		{ key: "home", team: home, prob: consensus.home },
-		{ key: "away", team: away, prob: consensus.away }
+		{ key: "home", team: home, prob: calibratedBlend.home },
+		{ key: "away", team: away, prob: calibratedBlend.away }
 	];
-	if (consensus.draw > 0.001) {
-		outcomes.push({ key: "draw", team: "Draw", prob: consensus.draw });
+	if (modelProfile.allowDraw && calibratedBlend.draw > 0.001) {
+		outcomes.push({ key: "draw", team: "Draw", prob: calibratedBlend.draw });
 	}
 	outcomes.sort((a, b) => b.prob - a.prob);
 
 	const best = outcomes[0];
 	const second = outcomes[1] || { prob: 0 };
-	const calibratedProb = clampNumber(best.prob, 0.45, 0.56);
-	const edgePct = Math.max(0.8, Math.min(5, (calibratedProb - second.prob) * 100));
-	const agreementScore = Math.max(0, 1 - (consensus.agreementStdDev / 0.12));
-	const sampleBoost = Math.min(1, consensus.sampleSize / 6);
-	const confidenceScore = (edgePct / 5) * 0.5 + agreementScore * 0.35 + sampleBoost * 0.15;
-	const confidence = confidenceScore >= 0.8 ? "very high" : confidenceScore >= 0.65 ? "high" : confidenceScore >= 0.5 ? "average" : confidenceScore >= 0.35 ? "low" : "very low";
-	const leanPct = (Math.max(0.5, Math.min(0.56, calibratedProb)) * 100).toFixed(1);
+	const consensusSampleSize = Math.max(1, Number(consensus.sampleSize) || 1);
+	const combinedReliability = clampNumber((marketReliability * 0.62) + (historyReliability * 0.38), 0.1, 0.9);
+	const disagreementUncertainty = clampNumber(Number(consensus.agreementStdDev) / 0.12, 0, 0.42);
+	const sparseMarketPenalty = consensusSampleSize <= 1 ? 0.22 : consensusSampleSize <= 2 ? 0.12 : 0;
+	const uncertaintyPenalty = clampNumber(disagreementUncertainty + sparseMarketPenalty, 0, 0.55);
+	const shrinkFactor = clampNumber(0.52 - (combinedReliability * 0.24) + (uncertaintyPenalty * 0.22), 0.2, 0.58);
+	const conservativeProbCap = combinedReliability >= 0.62 ? 0.76 : combinedReliability >= 0.44 ? 0.73 : 0.69;
+	const calibratedProb = clampNumber(0.5 + ((best.prob - 0.5) * (1 - shrinkFactor)), 0.5, conservativeProbCap);
+	const calibratedSecond = clampNumber(0.5 + ((second.prob - 0.5) * (1 - shrinkFactor)), 0.2, 0.49);
+	const marketSnapshotForConfidence = getPredictionMarketSnapshot(eventRow, oddsRow, { predictedTeam: best.team, leanPct: (calibratedProb * 100).toFixed(1) });
+	const marketEdgePct = Number.isFinite(marketSnapshotForConfidence.edgePct)
+		? marketSnapshotForConfidence.edgePct
+		: NaN;
+	const rawEdgePct = Number.isFinite(marketEdgePct)
+		? marketEdgePct
+		: (calibratedProb - calibratedSecond) * 100;
+	const edgeDampening = clampNumber(1 - (uncertaintyPenalty * 0.7), 0.45, 1);
+	const adjustedEdgePct = rawEdgePct >= 0
+		? rawEdgePct * edgeDampening
+		: rawEdgePct * clampNumber(0.92 + (uncertaintyPenalty * 0.18), 0.92, 1.1);
+	const edgePct = clampNumber(adjustedEdgePct, -12, 18);
+	const edgeForConfidence = Math.max(0, edgePct);
+
+	const agreementScore = Math.max(0, 1 - (consensus.agreementStdDev / 0.14));
+	const sampleSupport = clampNumber(Math.log10(Math.max(2, consensus.sampleSize + 1)) / Math.log10(8), 0, 1);
+	const margin = Math.max(0, calibratedProb - calibratedSecond);
+	const marginSupport = clampNumber(margin / 0.16, 0, 1);
+	const uncertaintyPenaltyScore = clampNumber(Number(consensus.agreementStdDev) / 0.2, 0, 0.55);
+	const sourceAgreement = historyPrediction && historyPrediction.predictedTeam
+		? (normalizeTeamName(historyPrediction.predictedTeam) === normalizeTeamName(best.team) ? 1 : 0)
+		: 0.5;
+	const confidenceScore = (edgeForConfidence / 18) * 0.32
+		+ (agreementScore * 0.2)
+		+ (sampleSupport * 0.18)
+		+ (combinedReliability * 0.14)
+		+ (sourceAgreement * 0.08)
+		+ (marginSupport * 0.08)
+		- (edgePct < 0 ? 0.2 : 0)
+		- uncertaintyPenaltyScore;
+	let confidence = confidenceScore >= 0.79 ? "very high"
+		: confidenceScore >= 0.66 ? "high"
+		: confidenceScore >= 0.5 ? "average"
+		: confidenceScore >= 0.34 ? "low"
+		: "very low";
+	if (edgePct < 1.2 && confidence !== 'very low') {
+		confidence = 'low';
+	}
+	if (uncertaintyPenalty >= 0.36 && (confidence === 'very high' || confidence === 'high')) {
+		confidence = 'average';
+	}
+	if (consensusSampleSize <= 1 && historyReliability < 0.2) {
+		confidence = 'very low';
+	}
+	const leanPct = (calibratedProb * 100).toFixed(1);
 
 	const label = best.key === "draw"
 		? "Prediction: Draw"
@@ -1692,15 +2279,16 @@ function getPredictionForEvent(eventRow, oddsRow, historyMap = null, sportKey = 
 	const result = {
 		label,
 		predictedTeam: best.team,
-		edgePct,
-		source: "market-consensus",
+		edgePct: Number(edgePct.toFixed(1)),
+		source: historyProbabilities ? "ensemble-model" : "market-consensus",
 		confidence,
 		leanPct
 	};
-	capturePregamePredictionSnapshot(eventRow, result, sportKey);
+	const enrichedResult = enrichPredictionWithMarketMetrics(eventRow, oddsRow, result);
+	capturePregamePredictionSnapshot(eventRow, enrichedResult, resolvedSportKey);
 	return {
-		...result,
-		topBets: buildTopBetSuggestions(eventRow, result, sportKey)
+		...enrichedResult,
+		topBets: buildTopBetSuggestions(eventRow, enrichedResult, resolvedSportKey)
 	};
 }
 
@@ -1764,6 +2352,43 @@ function getTierClassFromEdge(edgePct) {
 	return "tier-gold";
 }
 
+function getTierClassFromEv(evPct) {
+	if (!Number.isFinite(evPct)) {
+		return "tier-neutral";
+	}
+	if (evPct < 0) {
+		return "tier-red";
+	}
+	if (evPct < 2) {
+		return "tier-orange";
+	}
+	if (evPct <= 8) {
+		return "tier-green";
+	}
+	return "tier-gold";
+}
+
+function formatEvTagText(evPct) {
+	if (!Number.isFinite(evPct)) {
+		return "N/A";
+	}
+	const rounded = Number(evPct).toFixed(1);
+	if (evPct > 0) {
+		return '+' + rounded + '% (+EV)';
+	}
+	return rounded + '%';
+}
+
+function buildEvBadge(prediction, eventRow, oddsRow) {
+	if (!prediction || !prediction.predictedTeam) {
+		return '<span class="meta-pill tier-neutral" title="' + escapeHtml(EV_TOOLTIP_TEXT) + '">EV: N/A</span>';
+	}
+	const marketSnapshot = getPredictionMarketSnapshot(eventRow, oddsRow, prediction);
+	const evPct = Number.isFinite(Number(prediction && prediction.evPct)) ? Number(prediction.evPct) : marketSnapshot.evPct;
+	const evTierClass = getTierClassFromEv(evPct);
+	return '<span class="meta-pill ' + evTierClass + '" title="' + escapeHtml(EV_TOOLTIP_TEXT) + '">EV: ' + escapeHtml(formatEvTagText(evPct)) + '</span>';
+}
+
 function normalizeConfidenceLabel(value) {
 	const normalized = String(value || '').trim().toLowerCase();
 	if (normalized === 'very high') {
@@ -1785,7 +2410,7 @@ function normalizeConfidenceLabel(value) {
 }
 
 function getTierClassFromConfidence(confidence, edgePct, source) {
-	if (source === "fallback") {
+	if (String(source || '').toLowerCase().includes('fallback')) {
 		return "tier-orange";
 	}
 	const normalized = normalizeConfidenceLabel(confidence);
@@ -1796,7 +2421,7 @@ function getTierClassFromConfidence(confidence, edgePct, source) {
 		return "tier-green";
 	}
 	if (normalized === "average") {
-		return "tier-gold";
+		return "tier-orange";
 	}
 	if (normalized === "low") {
 		return "tier-orange";
@@ -1807,34 +2432,29 @@ function getTierClassFromConfidence(confidence, edgePct, source) {
 function buildSummaryStrip({
 	ratioText = null,
 	totalOddsText = null,
-	individualOddsText = null,
-	individualWinningsText = null,
+	multiOddsParts = null,
 	ratioLabel = "Prediction ratio",
-	totalOddsLabel = "Multi @ 1.00",
-	individualWinningsLabel = "Singles @ 1.00"
+	totalOddsLabel = "Multi"
 } = {}) {
 	const ratioMarkup = ratioText
 		? '<div class="summary-stat"><span class="summary-label">' + escapeHtml(ratioLabel) + '</span><strong>' + escapeHtml(ratioText) + '</strong></div>'
 		: '';
+	const normalizedParts = (Array.isArray(multiOddsParts) ? multiOddsParts : [])
+		.map((value) => Number(value))
+		.filter((value) => Number.isFinite(value) && value > 0);
 	const multiOddsValue = Number(totalOddsText);
-	const multiWinningsText = Number.isFinite(multiOddsValue) && multiOddsValue > 0 ? '$' + (multiOddsValue * 100).toFixed(2) : null;
-	const multiLabel = Number.isFinite(multiOddsValue) ? 'Multi @ ' + multiOddsValue.toFixed(2) : totalOddsLabel;
-	const multiMarkup = multiWinningsText
-		? '<div class="summary-stat"><span class="summary-label">' + escapeHtml(multiLabel) + '</span><strong>' + escapeHtml(multiWinningsText) + '</strong></div>'
-		: '';
-	const normalizedSinglesOddsValue = Number.isFinite(Number(individualOddsText)) ? Number(individualOddsText) : (Number.isFinite(Number(individualWinningsText)) ? Number(individualWinningsText) / 100 : NaN);
-	const normalizedSinglesStakeValue = Number.isFinite(Number(individualWinningsText)) ? Number(individualWinningsText) : (Number.isFinite(Number(individualOddsText)) ? Number(individualOddsText) * 100 : NaN);
-	const individualOddsValue = Number(normalizedSinglesOddsValue);
-	const individualStakeValue = Number(normalizedSinglesStakeValue);
-	const individualWinningsTextValue = Number.isFinite(individualStakeValue) && individualStakeValue > 0 ? '$' + individualStakeValue.toFixed(2) : null;
-	const individualLabel = Number.isFinite(individualOddsValue) ? 'Singles @ ' + individualOddsValue.toFixed(2) : individualWinningsLabel;
-	const individualMarkup = individualWinningsTextValue
-		? '<div class="summary-stat"><span class="summary-label">' + escapeHtml(individualLabel) + '</span><strong>' + escapeHtml(individualWinningsTextValue) + '</strong></div>'
-		: '';
-	if (!ratioMarkup && !multiMarkup && !individualMarkup) {
+	const fallbackMultiOdds = Number.isFinite(multiOddsValue) && multiOddsValue > 0 ? multiOddsValue : 1;
+	const multiProduct = normalizedParts.length ? normalizedParts.reduce((product, value) => product * value, 1) : fallbackMultiOdds;
+	const multiExpression = normalizedParts.length ? normalizedParts.map((value) => value.toFixed(2)).join(' x ') : fallbackMultiOdds.toFixed(2);
+	const stakeValue = Number.isFinite(Number(state.exampleStake)) && Number(state.exampleStake) >= 0 ? Number(state.exampleStake) : 100;
+	const valueAmount = multiProduct;
+	const multiMarkup = '';
+	const stakeMarkup = '';
+	const valueMarkup = '';
+	if (!ratioMarkup && !multiMarkup && !stakeMarkup && !valueMarkup) {
 		return '';
 	}
-	return '<div class="summary-strip">' + ratioMarkup + multiMarkup + individualMarkup + '</div>';
+	return '<div class="summary-strip">' + ratioMarkup + multiMarkup + stakeMarkup + valueMarkup + '</div>';
 }
 
 function getNumericOddsValue(rawValue) {
@@ -1929,15 +2549,358 @@ function matchesResultsSearch(sportTitle, home, away) {
 
 function buildPredictionContext(entry, oddsByEventId, historyMap = null, sportKey = '') {
 	const row = entry && entry.row ? entry.row : entry;
-	const fallbackSportKey = entry && entry.sportKey ? String(entry.sportKey) : sportKey;
 	const eventId = row && row.id ? String(row.id) : '';
 	const oddsRow = entry && entry.oddsRow
 		? entry.oddsRow
 		: (eventId && oddsByEventId ? oddsByEventId[eventId] : null);
+	const fallbackSportKey = resolveSportKeyForPrediction(row, entry && entry.sportKey ? String(entry.sportKey) : sportKey, oddsRow);
 	const prediction = entry && entry.prediction
 		? entry.prediction
 		: getPredictionForEvent(row, oddsRow, entry && entry.historyMap ? entry.historyMap : historyMap, fallbackSportKey);
 	return { row, oddsRow, prediction, sportKey: fallbackSportKey };
+}
+
+function getActualOutcomeForRow(row) {
+	if (!row || !hasUsableScoreData(row)) {
+		return '';
+	}
+	const scores = extractEventScores(row);
+	if (!Number.isFinite(scores.homeScore) || !Number.isFinite(scores.awayScore)) {
+		return '';
+	}
+	if (scores.homeScore === scores.awayScore) {
+		return 'draw';
+	}
+	return scores.homeScore > scores.awayScore ? 'home' : 'away';
+}
+
+function getPredictedOutcomeKey(eventRow, prediction) {
+	if (!eventRow || !prediction || !prediction.predictedTeam) {
+		return '';
+	}
+	const predictedNorm = normalizeTeamName(prediction.predictedTeam);
+	const homeNorm = normalizeTeamName(eventRow.home_team || '');
+	const awayNorm = normalizeTeamName(eventRow.away_team || '');
+	if (predictedNorm === 'draw') {
+		return 'draw';
+	}
+	if (predictedNorm === homeNorm) {
+		return 'home';
+	}
+	if (predictedNorm === awayNorm) {
+		return 'away';
+	}
+	return '';
+}
+
+function getLegacyMarketBaselinePrediction(eventRow, oddsRow, sportKey = '') {
+	const consensus = buildConsensusProbabilities(eventRow, oddsRow);
+	if (!consensus) {
+		return null;
+	}
+	const resolvedSportKey = resolveSportKeyForPrediction(eventRow, sportKey, oddsRow);
+	const profile = getSportModelProfile(resolvedSportKey);
+	const home = eventRow && eventRow.home_team ? String(eventRow.home_team) : 'Home';
+	const away = eventRow && eventRow.away_team ? String(eventRow.away_team) : 'Away';
+	const outcomes = [
+		{ key: 'home', team: home, prob: consensus.home },
+		{ key: 'away', team: away, prob: consensus.away }
+	];
+	if (profile.allowDraw && consensus.draw > 0.001) {
+		outcomes.push({ key: 'draw', team: 'Draw', prob: consensus.draw });
+	}
+	outcomes.sort((a, b) => b.prob - a.prob);
+	const best = outcomes[0];
+	if (!best) {
+		return null;
+	}
+	const leanPct = (Math.max(0.5, Math.min(0.56, best.prob)) * 100).toFixed(1);
+	return {
+		predictedTeam: best.team,
+		leanPct
+	};
+}
+
+function buildPredictionBacktestSummary(items) {
+	const rows = Array.isArray(items) ? items : [];
+	const ensemble = { total: 0, hits: 0, brierSum: 0 };
+	const baseline = { total: 0, hits: 0, brierSum: 0 };
+
+	for (const item of rows) {
+		const row = item && item.row ? item.row : null;
+		const actual = getActualOutcomeForRow(row);
+		if (!actual) {
+			continue;
+		}
+
+		const ensemblePrediction = item && item.prediction ? item.prediction : null;
+		const ensemblePick = getPredictedOutcomeKey(row, ensemblePrediction);
+		const ensembleProb = clampNumber(Number(ensemblePrediction && ensemblePrediction.leanPct) / 100, 0.34, 0.9);
+		if (ensemblePick && Number.isFinite(ensembleProb)) {
+			const won = ensemblePick === actual;
+			ensemble.total += 1;
+			ensemble.hits += won ? 1 : 0;
+			ensemble.brierSum += Math.pow(ensembleProb - (won ? 1 : 0), 2);
+		}
+
+		const baselinePrediction = getLegacyMarketBaselinePrediction(row, item && item.oddsRow ? item.oddsRow : null, item && item.sportKey ? item.sportKey : '');
+		const baselinePick = getPredictedOutcomeKey(row, baselinePrediction);
+		const baselineProb = clampNumber(Number(baselinePrediction && baselinePrediction.leanPct) / 100, 0.34, 0.9);
+		if (baselinePick && Number.isFinite(baselineProb)) {
+			const won = baselinePick === actual;
+			baseline.total += 1;
+			baseline.hits += won ? 1 : 0;
+			baseline.brierSum += Math.pow(baselineProb - (won ? 1 : 0), 2);
+		}
+	}
+
+	if (!ensemble.total) {
+		return null;
+	}
+
+	const ensembleAccuracy = (ensemble.hits / ensemble.total) * 100;
+	const ensembleBrier = ensemble.brierSum / ensemble.total;
+	const baselineAccuracy = baseline.total ? (baseline.hits / baseline.total) * 100 : NaN;
+	const baselineBrier = baseline.total ? (baseline.brierSum / baseline.total) : NaN;
+	return {
+		sampleSize: ensemble.total,
+		ensembleAccuracy,
+		ensembleBrier,
+		baselineAccuracy,
+		baselineBrier
+	};
+}
+
+function readBacktestHistory() {
+	try {
+		const raw = localStorage.getItem(BACKTEST_HISTORY_KEY);
+		if (!raw) {
+			return [];
+		}
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return [];
+	}
+}
+
+function writeBacktestHistory(history) {
+	if (!Array.isArray(history)) {
+		return;
+	}
+	try {
+		localStorage.setItem(BACKTEST_HISTORY_KEY, JSON.stringify(history));
+	} catch {
+		// Ignore local storage failures.
+	}
+}
+
+function saveBacktestSnapshot(scopeLabel, backtest, perSportBreakdown = []) {
+	if (!backtest || !Number.isFinite(backtest.sampleSize) || backtest.sampleSize <= 0) {
+		return;
+	}
+	const history = readBacktestHistory();
+	history.push({
+		ts: new Date().toISOString(),
+		scope: String(scopeLabel || ''),
+		sampleSize: Number(backtest.sampleSize),
+		ensembleAccuracy: Number(backtest.ensembleAccuracy),
+		ensembleBrier: Number(backtest.ensembleBrier),
+		baselineAccuracy: Number(backtest.baselineAccuracy),
+		baselineBrier: Number(backtest.baselineBrier),
+		perSport: Array.isArray(perSportBreakdown) ? perSportBreakdown.slice(0, 6).map((item) => ({
+			sport: String(item && item.sport ? item.sport : ''),
+			sampleSize: Number(item && item.sampleSize),
+			accuracy: Number(item && item.accuracy),
+			brier: Number(item && item.brier)
+		})) : []
+	});
+	while (history.length > 16) {
+		history.shift();
+	}
+	writeBacktestHistory(history);
+}
+
+function normalizeBacktestTrendWindow(value) {
+	const numeric = Number(value);
+	if (numeric === 1 || numeric === 5 || numeric === 10) {
+		return numeric;
+	}
+	return 5;
+}
+
+function getBacktestTrendWindow() {
+	const stateValue = normalizeBacktestTrendWindow(state && state.backtestTrendWindow ? state.backtestTrendWindow : 5);
+	if (state) {
+		state.backtestTrendWindow = stateValue;
+	}
+	try {
+		const stored = localStorage.getItem(BACKTEST_TREND_WINDOW_KEY);
+		if (!stored) {
+			return stateValue;
+		}
+		const normalized = normalizeBacktestTrendWindow(stored);
+		if (state) {
+			state.backtestTrendWindow = normalized;
+		}
+		return normalized;
+	} catch {
+		return stateValue;
+	}
+}
+
+function setBacktestTrendWindow(value) {
+	const normalized = normalizeBacktestTrendWindow(value);
+	if (state) {
+		state.backtestTrendWindow = normalized;
+	}
+	try {
+		localStorage.setItem(BACKTEST_TREND_WINDOW_KEY, String(normalized));
+	} catch {
+		// Ignore local storage failures.
+	}
+	return normalized;
+}
+
+function getRecentBacktestTrend(limit = 5) {
+	const history = readBacktestHistory();
+	if (!history.length) {
+		return [];
+	}
+	const rows = history.slice(-Math.max(1, Number(limit) || 5));
+	return rows.map((entry) => ({
+		timestamp: entry && entry.ts ? String(entry.ts) : '',
+		sampleSize: Number(entry && entry.sampleSize),
+		ensembleAccuracy: Number(entry && entry.ensembleAccuracy),
+		ensembleBrier: Number(entry && entry.ensembleBrier)
+	})).filter((entry) => Number.isFinite(entry.sampleSize) && entry.sampleSize > 0);
+}
+
+function buildPerSportBacktestBreakdown(items) {
+	const rows = Array.isArray(items) ? items : [];
+	const bySport = new Map();
+	for (const item of rows) {
+		const row = item && item.row ? item.row : null;
+		const actual = getActualOutcomeForRow(row);
+		if (!actual) {
+			continue;
+		}
+		const prediction = item && item.prediction ? item.prediction : null;
+		const predictedKey = getPredictedOutcomeKey(row, prediction);
+		const prob = clampNumber(Number(prediction && prediction.leanPct) / 100, 0.34, 0.9);
+		if (!predictedKey || !Number.isFinite(prob)) {
+			continue;
+		}
+		const sportName = String(item && item.sportTitle ? item.sportTitle : item && item.sportKey ? item.sportKey : 'Unknown').trim() || 'Unknown';
+		if (!bySport.has(sportName)) {
+			bySport.set(sportName, { sport: sportName, total: 0, hits: 0, brierSum: 0 });
+		}
+		const target = bySport.get(sportName);
+		const won = predictedKey === actual;
+		target.total += 1;
+		target.hits += won ? 1 : 0;
+		target.brierSum += Math.pow(prob - (won ? 1 : 0), 2);
+	}
+
+	return Array.from(bySport.values())
+		.filter((item) => item.total > 0)
+		.map((item) => ({
+			sport: item.sport,
+			sampleSize: item.total,
+			accuracy: (item.hits / item.total) * 100,
+			brier: item.brierSum / item.total
+		}))
+		.sort((a, b) => b.sampleSize - a.sampleSize)
+		.slice(0, 4);
+}
+
+function buildBacktestTrendSparkline(rows) {
+	const safeRows = Array.isArray(rows) ? rows.filter((row) => row && Number.isFinite(Number(row.ensembleAccuracy))) : [];
+	if (!safeRows.length) {
+		return '';
+	}
+	const values = safeRows.map((row) => Number(row.ensembleAccuracy));
+	const minVal = Math.min(...values, 0);
+	const maxVal = Math.max(...values, 100);
+	const spread = Math.max(1, maxVal - minVal);
+	const points = values.map((value, index) => {
+		const x = safeRows.length === 1 ? 80 : 12 + ((index / (safeRows.length - 1)) * 136);
+		const y = 26 - ((value - minVal) / spread) * 18;
+		return x + ',' + y.toFixed(2);
+	}).join(' ');
+	const firstPoint = values.length === 1 ? '80,26' : '';
+	const areaPoints = safeRows.length === 1
+		? '80,26 80,26 80,26'
+		: '12,26 ' + points + ' 148,26';
+	return '<svg class="backtest-sparkline" viewBox="0 0 160 34" preserveAspectRatio="none" aria-label="Backtest trend chart">'
+		+ '<polygon class="backtest-sparkline-area" points="' + areaPoints + '"></polygon>'
+		+ '<polyline class="backtest-sparkline-line" points="' + points + '" fill="none"></polyline>'
+		+ (firstPoint ? '<circle class="backtest-sparkline-dot" cx="80" cy="26" r="2.5"></circle>' : '')
+		+ '</svg>';
+}
+
+function buildBacktestCardMarkup(backtest, evaluatedItems, scopeLabel = '') {
+	const safeBacktest = backtest && typeof backtest === 'object' ? backtest : {
+		sampleSize: 0,
+		ensembleAccuracy: 0,
+		ensembleBrier: 0,
+		baselineAccuracy: NaN,
+		baselineBrier: NaN
+	};
+	const hasData = Number.isFinite(safeBacktest.sampleSize) && safeBacktest.sampleSize > 0;
+	const deltaAccuracy = Number.isFinite(safeBacktest.baselineAccuracy) ? (safeBacktest.ensembleAccuracy - safeBacktest.baselineAccuracy) : NaN;
+	const deltaBrier = Number.isFinite(safeBacktest.baselineBrier) ? (safeBacktest.baselineBrier - safeBacktest.ensembleBrier) : NaN;
+	const accuracyTier = Number.isFinite(deltaAccuracy) ? (deltaAccuracy >= 0 ? 'tier-green' : 'tier-red') : 'tier-neutral';
+	const brierTier = Number.isFinite(deltaBrier) ? (deltaBrier >= 0 ? 'tier-green' : 'tier-red') : 'tier-neutral';
+	const trendWindow = getBacktestTrendWindow();
+	const trend = hasData
+		? (trendWindow === 1
+			? [{ timestamp: new Date().toISOString(), sampleSize: safeBacktest.sampleSize, ensembleAccuracy: safeBacktest.ensembleAccuracy, ensembleBrier: safeBacktest.ensembleBrier }]
+			: getRecentBacktestTrend(trendWindow))
+		: [];
+	const trendHtml = trend.length
+		? '<div class="backtest-trend">' + trend.map((row) => {
+			const stamp = row.timestamp ? new Date(row.timestamp) : null;
+			const label = trendWindow === 1
+				? 'Current'
+				: stamp && Number.isFinite(stamp.getTime())
+					? stamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+					: 'Run';
+			return '<span class="meta-pill tier-neutral" title="Sample ' + row.sampleSize + ', Brier ' + row.ensembleBrier.toFixed(3) + '">' + escapeHtml(label + ' ' + row.ensembleAccuracy.toFixed(1) + '%') + '</span>';
+		}).join('') + '</div>'
+		: '<p class="backtest-note">Trend builds as you reload Results.</p>';
+	const perSport = buildPerSportBacktestBreakdown(Array.isArray(evaluatedItems) ? evaluatedItems : []);
+	const perSportHtml = perSport.length
+		? '<div class="backtest-sport-grid">' + perSport.map((item) => '<div class="backtest-sport-row"><span>' + escapeHtml(item.sport) + '</span><strong>' + escapeHtml(item.accuracy.toFixed(1) + '%') + '</strong><span>' + escapeHtml('Brier ' + item.brier.toFixed(3) + ' | n=' + item.sampleSize) + '</span></div>').join('') + '</div>'
+		: '<p class="backtest-note">' + (hasData ? 'Not enough settled outcomes for per-sport split.' : 'No settled outcomes yet. Backtest will show here when results are available.') + '</p>';
+	const toggleButton = (windowValue, label) => {
+		const isActive = trendWindow === windowValue;
+		const iconClass = windowValue === 1 ? 'fa-bolt' : 'fa-chart-line';
+		return '<button type="button" class="backtest-toggle-btn' + (isActive ? ' is-active' : '') + '" data-action="backtest-trend-window" data-window="' + windowValue + '" aria-pressed="' + (isActive ? 'true' : 'false') + '"><i class="fa-solid ' + iconClass + '" aria-hidden="true"></i>' + escapeHtml(label) + '</button>';
+	};
+	const summaryStats = hasData
+		? '<div class="summary-strip">'
+			+ '<div class="summary-stat"><span class="summary-label">Ensemble Accuracy</span><strong>' + escapeHtml(safeBacktest.ensembleAccuracy.toFixed(1) + '%') + '</strong></div>'
+			+ '<div class="summary-stat"><span class="summary-label">Ensemble Brier</span><strong>' + escapeHtml(safeBacktest.ensembleBrier.toFixed(3)) + '</strong></div>'
+			+ '<div class="summary-stat"><span class="summary-label">Vs Baseline Accuracy</span><strong class="backtest-delta ' + accuracyTier + '">' + escapeHtml(Number.isFinite(deltaAccuracy) ? ((deltaAccuracy >= 0 ? '+' : '') + deltaAccuracy.toFixed(1) + ' pts') : 'N/A') + '</strong></div>'
+			+ '<div class="summary-stat"><span class="summary-label">Vs Baseline Brier</span><strong class="backtest-delta ' + brierTier + '">' + escapeHtml(Number.isFinite(deltaBrier) ? ((deltaBrier >= 0 ? '+' : '') + deltaBrier.toFixed(3)) : 'N/A') + '</strong></div>'
+			+ '</div>'
+		: '<div class="summary-strip"><div class="summary-stat"><span class="summary-label">Status</span><strong>Waiting for settled results</strong></div></div>';
+
+	return '<section class="backtest-card" aria-label="Prediction backtest summary">'
+		+ '<div class="backtest-head"><h3>Backtest</h3><span class="meta-pill tier-neutral">' + escapeHtml((scopeLabel || 'Results') + ' | n=' + (hasData ? safeBacktest.sampleSize : 0)) + '</span></div>'
+		+ summaryStats
+		+ '<div class="backtest-toggle" role="group" aria-label="Backtest trend window">'
+		+ toggleButton(1, 'Current')
+		+ toggleButton(5, 'Last 5')
+		+ toggleButton(10, 'Last 10')
+		+ '</div>'
+		+ '<p class="backtest-subhead">Recent Trend</p>'
+		+ (hasData ? buildBacktestTrendSparkline(trend) : '<p class="backtest-note">No recent backtest data yet.</p>')
+		+ trendHtml
+		+ '<p class="backtest-subhead">Per-Sport Snapshot</p>'
+		+ perSportHtml
+		+ '</section>';
 }
 
 function buildRecentSummary(events, oddsByEventId, historyMap = null, sportKey = "") {
@@ -1945,6 +2908,7 @@ function buildRecentSummary(events, oddsByEventId, historyMap = null, sportKey =
 	let losses = 0;
 	let totalOdds = 1;
 	let totalOddsCount = 0;
+	const multiOddsParts = [];
 
 	for (const entry of Array.isArray(events) ? events : []) {
 		const priorHistoryRows = Array.isArray(historyMap) ? historyMap : (Array.isArray(events) ? events : []);
@@ -1957,7 +2921,9 @@ function buildRecentSummary(events, oddsByEventId, historyMap = null, sportKey =
 		}
 		const oddsValue = prediction && prediction.predictedTeam ? getNumericOddsValue(getBookmakerOddsForPrediction(row, oddsRow, prediction)) : null;
 		if (prediction && prediction.predictedTeam) {
-			totalOdds *= oddsValue !== null ? oddsValue : 1;
+			const normalizedOddsValue = oddsValue !== null ? oddsValue : 1;
+			totalOdds *= normalizedOddsValue;
+			multiOddsParts.push(normalizedOddsValue);
 			totalOddsCount += 1;
 		}
 		const result = prediction && prediction.predictedTeam ? getPredictionResultForCompletedEvent(row, prediction.predictedTeam) : null;
@@ -1981,6 +2947,7 @@ function buildRecentSummary(events, oddsByEventId, historyMap = null, sportKey =
 	return {
 		ratioText,
 		totalOddsText: totalOddsCount > 0 ? totalOdds.toFixed(2) : '1.00',
+		multiOddsParts,
 		individualOddsText: totalOddsCount > 0 ? individualOddsTotal.toFixed(2) : '0.00',
 		individualWinningsText: totalOddsCount > 0 ? (individualOddsTotal * 100).toFixed(2) : '0.00'
 	};
@@ -1989,6 +2956,7 @@ function buildRecentSummary(events, oddsByEventId, historyMap = null, sportKey =
 function buildUpcomingSummary(events, oddsByEventId, historyMap = null, sportKey = "") {
 	let totalOdds = 1;
 	let totalOddsCount = 0;
+	const multiOddsParts = [];
 	for (const entry of Array.isArray(events) ? events : []) {
 		const context = buildPredictionContext(entry, oddsByEventId, historyMap || null, sportKey);
 		const row = context.row;
@@ -1999,7 +2967,9 @@ function buildUpcomingSummary(events, oddsByEventId, historyMap = null, sportKey
 		}
 		const oddsValue = prediction && prediction.predictedTeam ? getNumericOddsValue(getBookmakerOddsForPrediction(row, oddsRow, prediction)) : null;
 		if (prediction && prediction.predictedTeam) {
-			totalOdds *= oddsValue !== null ? oddsValue : 1;
+			const normalizedOddsValue = oddsValue !== null ? oddsValue : 1;
+			totalOdds *= normalizedOddsValue;
+			multiOddsParts.push(normalizedOddsValue);
 			totalOddsCount += 1;
 		}
 	}
@@ -2017,6 +2987,7 @@ function buildUpcomingSummary(events, oddsByEventId, historyMap = null, sportKey
 	}, 0) : 0;
 	return {
 		totalOddsText: totalOddsCount > 0 ? totalOdds.toFixed(2) : '1.00',
+		multiOddsParts,
 		individualOddsText: totalOddsCount > 0 ? individualOddsTotal.toFixed(2) : '0.00',
 		individualWinningsText: totalOddsCount > 0 ? (individualOddsTotal * 100).toFixed(2) : '0.00'
 	};
@@ -2042,8 +3013,11 @@ function renderRecentResults(sportKey, events, oddsByEventId, historyMap = null)
 		oddsByEventId: oddsByEventId || {},
 		historyMap: historyMap || null
 	};
+	const backtestEmptyHtml = buildBacktestCardMarkup(null, [], sportTitle);
 	if (!Array.isArray(events) || !events.length) {
-		el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(sportTitle) + '</p><div class="empty">No recent results available for this sport.</div>';
+		el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(sportTitle) + '</p>'
+			+ backtestEmptyHtml
+			+ '<div class="empty">No recent results available for this sport.</div>';
 		return;
 	}
 
@@ -2063,6 +3037,9 @@ function renderRecentResults(sportKey, events, oddsByEventId, historyMap = null)
 		const prediction = getPredictionForEvent(row, oddsRow, priorHistoryRows, sportKey);
 		const hasPrediction = Boolean(prediction && prediction.predictedTeam);
 		if (!hasPrediction) {
+			if (hasActiveGameFilters()) {
+				continue;
+			}
 			noPredictionRows.push({ row, prediction, oddsRow, start, home, away });
 			continue;
 		}
@@ -2079,6 +3056,16 @@ function renderRecentResults(sportKey, events, oddsByEventId, historyMap = null)
 		sportKey
 	}));
 	const summary = buildRecentSummary(summaryRows, {}, historyMap, sportKey);
+	const evaluatedItems = [...predictedRows, ...noPredictionRows].map(({ row, oddsRow, prediction }) => ({
+		row,
+		oddsRow,
+		prediction,
+		sportKey,
+		sportTitle
+	}));
+	const backtest = buildPredictionBacktestSummary(evaluatedItems);
+	const backtestCardHtml = buildBacktestCardMarkup(backtest, evaluatedItems, sportTitle);
+	const recentViewMoreHtml = getRecentViewMoreMarkup();
 
 	const cardsHtml = [...predictedRows, ...noPredictionRows].map(({ row, prediction, oddsRow, start, home, away }) => {
 		const scoreText = getEventScoreText(row);
@@ -2091,6 +3078,7 @@ function renderRecentResults(sportKey, events, oddsByEventId, historyMap = null)
 		const winTierClass = getTierClassFromWinChance(winChanceValue);
 		const edgeTierClass = getTierClassFromEdge(Number(prediction && prediction.edgePct));
 		const confidenceTierClass = prediction && prediction.confidence ? getTierClassFromConfidence(confidenceText, Number(prediction && prediction.edgePct), prediction && prediction.source ? prediction.source : "none") : 'tier-neutral';
+		const evBadge = buildEvBadge(prediction, row, oddsRow);
 		const completedPredictionResult = hasPrediction ? getPredictionResultForCompletedEvent(row, prediction.predictedTeam) : { label: "No prediction", tierClass: "tier-neutral" };
 		const livePredictionStatus = hasPrediction ? getLivePredictionStatus(row, prediction.predictedTeam) : null;
 		const predictionOdds = getDisplayOddsForEvent(row, oddsRow, prediction);
@@ -2121,8 +3109,8 @@ function renderRecentResults(sportKey, events, oddsByEventId, historyMap = null)
 		return '<article class="game-card ' + (resultClass ? escapeHtml(resultClass) : '') + '"' + cardExpandAttrs + '>'
 			+ '<div class="game-head">'
 			+ '<div class="matchup-block">'
+			+ '<p class="sport-card-title">' + escapeHtml(sportTitle) + '</p>'
 			+ '<div class="matchup-title-row">'
-			+ '<span class="meta-pill sport-tag">Sport: ' + escapeHtml(sportTitle) + '</span>'
 			+ '<p class="matchup">' + escapeHtml(home + ' vs ' + away) + '</p>'
 			+ '</div>'
 			+ '<p class="kickoff">Started: ' + escapeHtml(formatDateTime(start)) + '</p>'
@@ -2137,6 +3125,7 @@ function renderRecentResults(sportKey, events, oddsByEventId, historyMap = null)
 			+ '<span class="meta-pill">Score: ' + escapeHtml(scoreText) + '</span>'
 			+ winBadge
 			+ edgeBadge
+			+ evBadge
 			+ confidenceBadge
 			+ resultBadge
 			+ '</div>'
@@ -2149,7 +3138,10 @@ function renderRecentResults(sportKey, events, oddsByEventId, historyMap = null)
 	}).join("");
 
 	if (!cardsHtml) {
-		el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(sportTitle) + '</p><div class="empty">No recent results match your search.</div>';
+		el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(sportTitle) + '</p>'
+			+ backtestCardHtml
+			+ '<div class="empty">No recent results match your search.</div>'
+			+ recentViewMoreHtml;
 		return;
 	}
 
@@ -2157,44 +3149,49 @@ function renderRecentResults(sportKey, events, oddsByEventId, historyMap = null)
 		+ buildSummaryStrip({
 			ratioText: summary.ratioText,
 			totalOddsText: summary.totalOddsText,
-			individualOddsText: summary.individualOddsText,
-			individualWinningsText: summary.individualWinningsText,
-			totalOddsLabel: 'Multi @ ' + Number(summary.totalOddsText ?? 1).toFixed(2),
-			individualWinningsLabel: 'Singles @ ' + Number(summary.individualOddsText ?? 0).toFixed(2)
+			multiOddsParts: summary.multiOddsParts
 		})
-		+ '<div class="upcoming-list">' + cardsHtml + '</div>';
+		+ backtestCardHtml
+		+ '<div class="upcoming-list">' + cardsHtml + '</div>'
+		+ recentViewMoreHtml;
 }
 
-function renderUpcomingEvents(sportKey, events, oddsByEventId, rangeKey = state.timeRange, historyMap = null) {
+function renderUpcomingEvents(sportKey, events, oddsByEventId, rangeKey = state.timeRange, historyMap = null, options = {}) {
 	bindGameCardInteractions();
 	const meta = state.sportsByKey[sportKey] || {};
 	const sportTitle = meta.title ? String(meta.title) : sportKey;
 	setResultSportOptions([sportTitle]);
+	const normalizedRange = normalizeRangeKey(rangeKey);
+	const hideLiveInThisView = normalizedRange !== 'live';
+	const isTodayRange = normalizeRangeKey(rangeKey) === 'today';
+	const hasRequestedTomorrow = Boolean(options && options.showTomorrow);
+	const showTomorrow = isTodayRange && hasRequestedTomorrow;
 	state.activeUpcomingSportData = {
 		sportKey,
 		events: Array.isArray(events) ? events.slice() : [],
 		oddsByEventId: oddsByEventId || {},
 		rangeKey,
-		historyMap: historyMap || null
+		historyMap: historyMap || null,
+		showTomorrow
 	};
 	const rangeLabel = getRangeLabel(rangeKey);
 	if (!Array.isArray(events) || !events.length) {
-		el.upcomingWrap.innerHTML = '<p class="subhead">Upcoming Games | ' + escapeHtml(sportTitle) + ' | ' + escapeHtml(rangeLabel) + '</p><div class="empty">No favored games found for ' + escapeHtml(rangeLabel.toLowerCase()) + '.</div>';
+		el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(rangeKey)) + ' | ' + escapeHtml(sportTitle) + ' | ' + escapeHtml(rangeLabel) + '</p><div class="empty">No games found for ' + escapeHtml(rangeLabel.toLowerCase()) + '.</div>';
 		return;
 	}
 
 	const days = [];
 	const dayMap = {};
 	const dayFormatter = new Intl.DateTimeFormat(undefined, { weekday: "short" });
-		const dateFormatter = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+	const dateFormatter = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 	const now = new Date();
-	const dayCount = 1;
-	const startDayOffset = 0;
+	const dayCount = isTodayRange ? 2 : 1;
 	for (let i = 0; i < dayCount; i += 1) {
-		const dayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + startDayOffset + i);
+		const dayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
 		const key = dayDate.getFullYear() + "-" + String(dayDate.getMonth() + 1).padStart(2, "0") + "-" + String(dayDate.getDate()).padStart(2, "0");
 		const dayObj = {
 			key,
+			offset: i,
 			dayLabel: dayFormatter.format(dayDate),
 			dateLabel: dateFormatter.format(dayDate),
 			items: []
@@ -2204,6 +3201,9 @@ function renderUpcomingEvents(sportKey, events, oddsByEventId, rangeKey = state.
 	}
 
 	for (const row of events) {
+		if (hideLiveInThisView && isLiveEventRow(row)) {
+			continue;
+		}
 		const homeName = row && row.home_team ? String(row.home_team) : "Home";
 		const awayName = row && row.away_team ? String(row.away_team) : "Away";
 		if (!matchesResultsSearch(sportTitle, homeName, awayName)) {
@@ -2224,12 +3224,14 @@ function renderUpcomingEvents(sportKey, events, oddsByEventId, rangeKey = state.
 			continue;
 		}
 		const predictionOdds = getDisplayOddsForEvent(row, oddsRow, prediction);
-		const scoreText = hasUsableScoreData(row) ? getEventScoreText(row) : '';
+		const liveGame = isLiveEventRow(row);
+		const scoreText = liveGame ? getEventScoreText(row) : (hasUsableScoreData(row) ? getEventScoreText(row) : '');
 		const winChanceValue = prediction && prediction.leanPct != null ? Number(prediction.leanPct) : NaN;
 		const confidenceText = normalizeConfidenceLabel(prediction && prediction.confidence ? prediction.confidence : "low");
 		const winTierClass = getTierClassFromWinChance(winChanceValue);
 		const edgeTierClass = getTierClassFromEdge(Number(prediction && prediction.edgePct));
 		const confidenceTierClass = prediction && prediction.confidence ? getTierClassFromConfidence(confidenceText, Number(prediction && prediction.edgePct), prediction && prediction.source ? prediction.source : "none") : 'tier-neutral';
+		const evBadge = buildEvBadge(prediction, row, oddsRow);
 		const hasPrediction = Boolean(prediction && prediction.predictedTeam);
 		const livePredictionStatus = hasPrediction && isLiveEventRow(row) ? getLivePredictionStatus(row, prediction.predictedTeam) : null;
 		const resultClass = livePredictionStatus === 'win' ? 'result-win' : livePredictionStatus === 'loss' ? 'result-loss' : '';
@@ -2256,32 +3258,41 @@ function renderUpcomingEvents(sportKey, events, oddsByEventId, rangeKey = state.
 			confidenceText,
 			winTierClass,
 			edgeTierClass,
+			evBadge,
 			confidenceTierClass,
 			topBets: Array.isArray(prediction && prediction.topBets) ? prediction.topBets : [],
 			hasPrediction,
 			insightsPanel,
 			livePredictionStatus,
 			resultClass,
-			resultBadge
+			resultBadge,
+			liveGame
 		};
 		dayMap[key].items.push(item);
 	}
 
-	const visibleSummaryItems = days.flatMap((day) => Array.isArray(day.items) ? day.items : []);
+	const renderedDays = isTodayRange && !showTomorrow
+		? days.filter((day) => day.offset === 0)
+		: days;
+	const todayItems = days[0] && Array.isArray(days[0].items) ? days[0].items : [];
+	const visibleSummaryItems = renderedDays.flatMap((day) => Array.isArray(day.items) ? day.items : []);
 	const upcomingSummary = buildUpcomingSummary(visibleSummaryItems, {}, historyMap, sportKey);
-	const sectionHtml = days.map((day) => {
+	const sectionHtml = renderedDays.map((day) => {
 		const cardsHtml = (day.items || []).slice().sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime()).map((item) => {
-			const liveGame = Boolean(item && item.start && isLiveEventRow({ commence_time: item.start }));
-			const oddsBadge = !liveGame && item.predictionOdds ? '<span class="odds-pill" title="Pre-game odds at kickoff">Pre: ' + escapeHtml(item.predictionOdds) + '</span>' : '';
-			const scoreBadge = item.scoreText ? '<span class="meta-pill">Score: ' + escapeHtml(item.scoreText) + '</span>' : '';
+			const liveGame = Boolean(item && item.liveGame);
+			const liveScoreBadge = item.scoreText ? '<span class="odds-pill" title="Live score">Score: ' + escapeHtml(item.scoreText) + '</span>' : '';
+			const oddsOrScoreBadge = liveGame
+				? liveScoreBadge
+				: (item.predictionOdds ? '<span class="odds-pill" title="Pre-game odds at kickoff">Pre: ' + escapeHtml(item.predictionOdds) + '</span>' : '');
+			const scoreBadge = !liveGame && item.scoreText ? '<span class="meta-pill">Score: ' + escapeHtml(item.scoreText) + '</span>' : '';
 			const expandHint = item.insightsPanel ? '<p class="card-expand-hint">Tap card for matchup insights</p>' : '';
 			const cardExpandAttrs = item.insightsPanel ? ' data-expand-card="true" role="button" tabindex="0" aria-expanded="false"' : '';
 			const resultClass = item.resultClass ? ' ' + item.resultClass : '';
 			return '<article class="game-card' + resultClass + '"' + cardExpandAttrs + '>'
 				+ '<div class="game-head">'
 				+ '<div class="matchup-block">'
+				+ '<p class="sport-card-title">' + escapeHtml(sportTitle) + '</p>'
 				+ '<div class="matchup-title-row">'
-				+ '<span class="meta-pill sport-tag">Sport: ' + escapeHtml(sportTitle) + '</span>'
 				+ '<p class="matchup">' + escapeHtml(item.home + ' vs ' + item.away) + '</p>'
 				+ '</div>'
 				+ '<p class="kickoff">Starts: ' + escapeHtml(formatDateTime(item.start)) + '</p>'
@@ -2290,12 +3301,13 @@ function renderUpcomingEvents(sportKey, events, oddsByEventId, rangeKey = state.
 				+ '<div class="prediction-stack">'
 				+ '<div class="prediction-row">'
 				+ '<p class="bet-name">' + escapeHtml(item.betName) + '</p>'
-				+ oddsBadge
+				+ oddsOrScoreBadge
 				+ '</div>'
 				+ '<div class="game-meta compact right-aligned">'
 				+ (scoreBadge || '')
 				+ '<span class="meta-pill ' + item.winTierClass + '">Win: ' + escapeHtml(item.winChanceText) + '</span>'
 				+ '<span class="meta-pill ' + item.edgeTierClass + '">Edge: ' + escapeHtml(item.edgeText) + '</span>'
+				+ item.evBadge
 				+ (item.confidenceText ? '<span class="meta-pill ' + item.confidenceTierClass + '">Conf: ' + escapeHtml(item.confidenceText) + '</span>' : '')
 				+ (item.resultBadge || '')
 				+ '</div>'
@@ -2312,38 +3324,98 @@ function renderUpcomingEvents(sportKey, events, oddsByEventId, rangeKey = state.
 			+ '<div class="upcoming-list">' + cardsHtml + '</div>'
 			+ '</section>';
 	}).join("");
-
-	if (!sectionHtml || !days.some((day) => Array.isArray(day.items) && day.items.length > 0)) {
-		el.upcomingWrap.innerHTML = '<p class="subhead">Upcoming Games | ' + escapeHtml(sportTitle) + ' | ' + escapeHtml(rangeLabel) + '</p><div class="empty">No games match your search.</div>';
+	const tomorrowItems = isTodayRange && days[1] && Array.isArray(days[1].items) ? days[1].items : [];
+	const showViewMoreButton = isTodayRange && !showTomorrow;
+	const viewMoreHtml = showViewMoreButton
+		? '<div class="upcoming-view-more-wrap"><div class="upcoming-separator" aria-hidden="true"></div><button type="button" class="upcoming-view-more-btn" data-action="view-more-upcoming"><i class="fa-solid fa-angles-down" aria-hidden="true"></i>View More</button></div>'
+		: '';
+	const hasVisibleItems = renderedDays.some((day) => Array.isArray(day.items) && day.items.length > 0);
+	const hasTodayItems = todayItems.length > 0;
+	const hasTomorrowItems = tomorrowItems.length > 0;
+	if (isTodayRange && !showTomorrow && !hasTodayItems && hasTomorrowItems) {
+		el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(rangeKey)) + ' | ' + escapeHtml(sportTitle) + ' | ' + escapeHtml(rangeLabel) + '</p>'
+			+ '<div class="empty">No remaining games found for today.</div>'
+			+ viewMoreHtml;
 		return;
 	}
 
-	el.upcomingWrap.innerHTML = '<p class="subhead">Upcoming Games | ' + escapeHtml(sportTitle) + ' | ' + escapeHtml(rangeLabel) + '</p>'
+	if (isTodayRange && showTomorrow && !hasTomorrowItems && hasTodayItems) {
+		el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(rangeKey)) + ' | ' + escapeHtml(sportTitle) + ' | ' + escapeHtml(rangeLabel) + '</p>'
+			+ sectionHtml
+			+ '<div class="empty">No games found for tomorrow.</div>';
+		return;
+	}
+
+	if (!sectionHtml || !hasVisibleItems) {
+		el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(rangeKey)) + ' | ' + escapeHtml(sportTitle) + ' | ' + escapeHtml(rangeLabel) + '</p>'
+			+ '<div class="empty">No games match your search.</div>';
+		return;
+	}
+
+	el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(rangeKey)) + ' | ' + escapeHtml(sportTitle) + ' | ' + escapeHtml(rangeLabel) + '</p>'
 		+ buildSummaryStrip({
 			totalOddsText: upcomingSummary.totalOddsText,
-			individualOddsText: upcomingSummary.individualOddsText,
-			individualWinningsText: upcomingSummary.individualWinningsText,
-			totalOddsLabel: 'Multi @ ' + Number(upcomingSummary.totalOddsText ?? 1).toFixed(2),
-			individualWinningsLabel: 'Singles @ ' + Number(upcomingSummary.individualOddsText ?? 0).toFixed(2)
+			multiOddsParts: upcomingSummary.multiOddsParts
 		})
-		+ sectionHtml;
+		+ sectionHtml
+		+ viewMoreHtml;
 }
 
 function renderUpcomingEventsForSavedSports(items, totalSportCount, visibleSportCount) {
 	bindGameCardInteractions();
 	const allItems = Array.isArray(items) ? items : [];
+	const normalizedRange = normalizeRangeKey(state.timeRange);
+	const isTodayRange = normalizedRange === 'today';
+	const hideLiveInThisView = normalizedRange !== 'live';
+	const showTomorrow = isTodayRange && state.upcomingSavedSportsShowTomorrow === true;
 	const selectedSport = state.resultSportFilter;
 	const scopedItems = selectedSport === 'all'
 		? allItems
 		: allItems.filter((item) => String(item && item.sportTitle ? item.sportTitle : '') === selectedSport);
 	const visibleItems = scopedItems.filter((item) => {
+		const row = item && item.row ? item.row : null;
+		if (hideLiveInThisView && isLiveEventRow(row)) {
+			return false;
+		}
+		if (!matchesWinRateFilter(item && item.prediction ? item.prediction : null)) {
+			return false;
+		}
 		const home = item && item.home ? String(item.home) : item && item.row && item.row.home_team ? String(item.row.home_team) : '';
 		const away = item && item.away ? String(item.away) : item && item.row && item.row.away_team ? String(item.row.away_team) : '';
 		const sportTitle = item && item.sportTitle ? String(item.sportTitle) : item && item.sportKey ? String(item.sportKey) : '';
 		return matchesResultsSearch(sportTitle, home, away);
 	});
-	if (!visibleItems.length) {
-		el.upcomingWrap.innerHTML = '<p class="subhead">Upcoming Games | Saved Sports</p><div class="empty">No games match your search.</div>';
+
+	const getDayOffsetFromItem = (item) => {
+		const ts = getEventStartTimestamp(item);
+		if (!Number.isFinite(ts)) {
+			return null;
+		}
+		const eventDate = new Date(ts);
+		const eventDay = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
+		const now = new Date();
+		const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+		return Math.round((eventDay.getTime() - startOfToday.getTime()) / (24 * 60 * 60 * 1000));
+	};
+
+	const todayItems = visibleItems.filter((item) => getDayOffsetFromItem(item) === 0);
+	const tomorrowItems = visibleItems.filter((item) => getDayOffsetFromItem(item) === 1);
+	const renderItems = isTodayRange
+		? (showTomorrow ? visibleItems.filter((item) => {
+			const dayOffset = getDayOffsetFromItem(item);
+			return dayOffset === 0 || dayOffset === 1;
+		}) : todayItems)
+		: visibleItems;
+	const showViewMoreButton = isTodayRange && !showTomorrow;
+	const viewMoreHtml = showViewMoreButton
+		? '<div class="upcoming-view-more-wrap"><div class="upcoming-separator" aria-hidden="true"></div><button type="button" class="upcoming-view-more-btn" data-action="view-more-upcoming"><i class="fa-solid fa-angles-down" aria-hidden="true"></i>View More</button></div>'
+		: '';
+	if (!renderItems.length) {
+		if (isTodayRange && !showTomorrow && tomorrowItems.length > 0) {
+			el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + ' | Saved Sports</p><div class="empty">No remaining games found for today.</div>' + viewMoreHtml;
+			return;
+		}
+		el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + ' | Saved Sports</p><div class="empty">No games match your search.</div>' + viewMoreHtml;
 		return;
 	}
 
@@ -2362,18 +3434,24 @@ function renderUpcomingEventsForSavedSports(items, totalSportCount, visibleSport
 		const winTierClass = getTierClassFromWinChance(winChanceValue);
 		const edgeTierClass = getTierClassFromEdge(Number(prediction && prediction.edgePct));
 		const confidenceTierClass = prediction && prediction.confidence ? getTierClassFromConfidence(confidenceText, Number(prediction && prediction.edgePct), prediction && prediction.source ? prediction.source : "none") : 'tier-neutral';
+		const evBadge = buildEvBadge(prediction, eventRow, oddsRow);
 		const sportSpecificTopBets = prediction && prediction.predictedTeam ? buildTopBetSuggestions({ home: item.home, away: item.away }, prediction, sportKey) : [];
-		const oddsBadge = !isLiveEventRow(eventRow) && predictionOdds ? '<span class="odds-pill" title="Pre-game odds at kickoff">Pre: ' + escapeHtml(predictionOdds) + '</span>' : '';
+		const liveGame = isLiveEventRow(eventRow);
+		const scoreText = liveGame ? getEventScoreText(eventRow) : (hasUsableScoreData(eventRow) ? getEventScoreText(eventRow) : '');
+		const liveScoreBadge = scoreText ? '<span class="odds-pill" title="Live score">Score: ' + escapeHtml(scoreText) + '</span>' : '';
+		const oddsOrScoreBadge = liveGame
+			? liveScoreBadge
+			: (predictionOdds ? '<span class="odds-pill" title="Pre-game odds at kickoff">Pre: ' + escapeHtml(predictionOdds) + '</span>' : '');
 		const confidenceBadge = prediction && prediction.confidence
 			? '<span class="meta-pill ' + confidenceTierClass + '">Conf: ' + escapeHtml(confidenceText) + '</span>'
 			: '';
 		const hasPrediction = Boolean(prediction && prediction.predictedTeam);
-		const livePredictionStatus = hasPrediction && isLiveEventRow(eventRow) ? getLivePredictionStatus(eventRow, prediction.predictedTeam) : null;
+		const livePredictionStatus = hasPrediction && liveGame ? getLivePredictionStatus(eventRow, prediction.predictedTeam) : null;
 		const resultClass = livePredictionStatus === 'win' ? 'result-win' : livePredictionStatus === 'loss' ? 'result-loss' : '';
 		const resultBadge = livePredictionStatus
 			? '<span class="meta-pill ' + (livePredictionStatus === 'win' ? 'tier-green' : 'tier-red') + '">Result: ' + (livePredictionStatus === 'win' ? 'Winning' : 'Losing') + '</span>'
 			: '';
-		const scoreBadge = hasUsableScoreData(eventRow) ? '<span class="meta-pill">Score: ' + escapeHtml(getEventScoreText(eventRow)) + '</span>' : '';
+		const scoreBadge = !liveGame && scoreText ? '<span class="meta-pill">Score: ' + escapeHtml(scoreText) + '</span>' : '';
 		const insightsPanel = hasPrediction
 			? attachTopBetsToInsights(buildGameInsightsPanel(eventRow, prediction, historyMap, oddsRow), sportSpecificTopBets)
 			: '';
@@ -2382,8 +3460,8 @@ function renderUpcomingEventsForSavedSports(items, totalSportCount, visibleSport
 		return '<article class="game-card' + (resultClass ? ' ' + resultClass : '') + '"' + cardExpandAttrs + '>'
 			+ '<div class="game-head">'
 			+ '<div class="matchup-block">'
+			+ '<p class="sport-card-title">' + escapeHtml(item.sportTitle) + '</p>'
 			+ '<div class="matchup-title-row">'
-			+ '<span class="meta-pill sport-tag">Sport: ' + escapeHtml(item.sportTitle) + '</span>'
 			+ '<p class="matchup">' + escapeHtml(item.home + ' vs ' + item.away) + '</p>'
 			+ '</div>'
 			+ '<p class="kickoff">Starts: ' + escapeHtml(formatDateTime(item.start)) + '</p>'
@@ -2392,12 +3470,13 @@ function renderUpcomingEventsForSavedSports(items, totalSportCount, visibleSport
 			+ '<div class="prediction-stack">'
 			+ '<div class="prediction-row">'
 			+ '<p class="bet-name">' + escapeHtml(betName) + '</p>'
-			+ oddsBadge
+			+ oddsOrScoreBadge
 			+ '</div>'
 			+ '<div class="game-meta compact right-aligned">'
 			+ scoreBadge
 			+ '<span class="meta-pill ' + winTierClass + '">Win: ' + escapeHtml(winChanceText) + '</span>'
 			+ '<span class="meta-pill ' + edgeTierClass + '">Edge: ' + escapeHtml(edgeText) + '</span>'
+			+ evBadge
 			+ confidenceBadge
 			+ resultBadge
 			+ '</div>'
@@ -2409,18 +3488,42 @@ function renderUpcomingEventsForSavedSports(items, totalSportCount, visibleSport
 			+ '</article>';
 	};
 
-	const upcomingSummary = buildUpcomingSummary(visibleItems, {}, null, '');
-	const cardsHtml = sortByStartAsc(visibleItems).map((item) => renderCard(item)).join('');
+	const upcomingSummary = buildUpcomingSummary(renderItems, {}, null, '');
+	const cardsHtml = sortByStartAsc(renderItems).map((item) => renderCard(item)).join('');
+	const todayCardsHtml = sortByStartAsc(todayItems).map((item) => renderCard(item)).join('');
+	const tomorrowCardsHtml = sortByStartAsc(tomorrowItems).map((item) => renderCard(item)).join('');
+	if (isTodayRange && showTomorrow && !tomorrowItems.length && cardsHtml) {
+		el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + ' | Saved Sports | ' + renderItems.length + ' bets (56%+)</p>'
+			+ buildSummaryStrip({
+				totalOddsText: upcomingSummary.totalOddsText,
+				multiOddsParts: upcomingSummary.multiOddsParts
+			})
+			+ '<div class="upcoming-list compact">' + cardsHtml + '</div>'
+			+ '<div class="empty">No games found for tomorrow.</div>';
+		return;
+	}
+	if (isTodayRange && showTomorrow && tomorrowCardsHtml) {
+		const todaySectionHtml = todayCardsHtml
+			? '<div class="upcoming-list compact">' + todayCardsHtml + '</div>'
+			: '<div class="empty">No remaining games found for today.</div>';
+		el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + ' | Saved Sports | ' + renderItems.length + ' bets (56%+)</p>'
+			+ buildSummaryStrip({
+				totalOddsText: upcomingSummary.totalOddsText,
+				multiOddsParts: upcomingSummary.multiOddsParts
+			})
+			+ todaySectionHtml
+			+ '<div class="upcoming-view-more-wrap upcoming-day-break"><div class="upcoming-separator" aria-hidden="true"></div><p class="upcoming-day-label">Tomorrow\'s Games</p></div>'
+			+ '<div class="upcoming-list compact">' + tomorrowCardsHtml + '</div>';
+		return;
+	}
 
-	el.upcomingWrap.innerHTML = '<p class="subhead">Upcoming Games | Saved Sports | ' + visibleItems.length + ' bets (56%+)</p>'
+	el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + ' | Saved Sports | ' + renderItems.length + ' bets (56%+)</p>'
 		+ buildSummaryStrip({
 			totalOddsText: upcomingSummary.totalOddsText,
-			individualOddsText: upcomingSummary.individualOddsText,
-			individualWinningsText: upcomingSummary.individualWinningsText,
-			totalOddsLabel: 'Multi @ ' + Number(upcomingSummary.totalOddsText ?? 1).toFixed(2),
-			individualWinningsLabel: 'Singles @ ' + Number(upcomingSummary.individualOddsText ?? 0).toFixed(2)
+			multiOddsParts: upcomingSummary.multiOddsParts
 		})
-		+ '<div class="upcoming-list compact">' + cardsHtml + '</div>';
+		+ '<div class="upcoming-list compact">' + cardsHtml + '</div>'
+		+ viewMoreHtml;
 }
 
 function renderUpcomingSportBatch() {
@@ -2449,18 +3552,59 @@ function renderUpcomingSportBatch() {
 	renderUpcomingEventsForSavedSports(allGames, sportOrder.length, sportOrder.length);
 }
 
-async function loadUpcomingForSport(sportKey, apiKey) {
+async function loadUpcomingForSport(sportKey, apiKey, options = {}) {
 	if (!sportKey) {
 		return;
 	}
-	state.rangeLoading = true;
-	syncRangeButtons();
+	const loadCost = 1;
+	const forceRefresh = Boolean(options && options.forceRefresh === true);
 	setView("upcoming");
 	state.activeSportKey = sportKey;
 	state.favoriteUpcomingSportTitles = [];
 	renderSportsTable(state.sportsRows);
-	setStatus("Scanning upcoming games for " + sportKey + "...", "");
-	el.upcomingWrap.innerHTML = '<p class="subhead">Upcoming Games</p><div class="loading-panel"><p class="loading-label">Loading upcoming games</p><div class="loading-bar"><span></span></div></div>';
+
+	const cachedEvents = readCache("upcoming_events_" + sportKey);
+	const cachedOddsRows = readCache("upcoming_odds_" + sportKey);
+	const cachedHistoryRows = readCache("upcoming_history_" + sportKey);
+	const rollingHistoryRows = readCache("rolling_history_" + sportKey);
+	const hasUsableCache = Array.isArray(cachedEvents) && cachedEvents.length > 0;
+	const shouldForceCacheOnHydration = state.isInitialHydration === true;
+	const needsRefresh = hasUsableCache
+		? (forceRefresh ? true : (shouldForceCacheOnHydration ? false : shouldRefreshCachedEvents(cachedEvents)))
+		: true;
+	if (hasUsableCache && !needsRefresh) {
+		const oddsByEventId = buildOddsByEventId(Array.isArray(cachedOddsRows) ? cachedOddsRows : []);
+		const historyRows = mergeRollingHistoryRows(rollingHistoryRows, cachedHistoryRows);
+		renderUpcomingEvents(sportKey, cachedEvents, oddsByEventId, state.timeRange, historyRows, { showTomorrow: false });
+		const cachedLoadedAt = readCacheTimestamp('upcoming_events_' + sportKey);
+		markDataLoaded(cachedEvents.length, Number.isFinite(cachedLoadedAt) ? cachedLoadedAt : Date.now());
+		setStatus('Loaded upcoming from cache. Auto-refresh happens 6 minutes before next game.', 'ok');
+		return;
+	}
+
+	if (state.isInitialHydration === true) {
+		setStatus('No cached upcoming data found for ' + sportKey + '. Add your API key to refresh this sport.', 'error');
+		el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + '</p><div class="empty">No cached upcoming data found for this sport.</div>';
+		return;
+	}
+
+	if (!String(apiKey || '').trim()) {
+		setStatus('No cached upcoming data found for ' + sportKey + '. Add your API key to refresh this sport.', 'error');
+		el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + '</p><div class="empty">No cached upcoming data found for this sport.</div>';
+		return;
+	}
+
+	if (!consumeSearchCredits(loadCost)) {
+		return;
+	}
+	const loadToken = beginTrackedLoading(loadCost);
+	const loadingStampCost = 3;
+	beginBusyOverlay();
+	state.rangeLoading = true;
+	syncRangeButtons();
+	setStatus((normalizeRangeKey(state.timeRange) === 'live' ? 'Scanning live games' : 'Scanning upcoming games') + ' for ' + sportKey + '...', "");
+	el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + '</p><div class="loading-panel"><p class="loading-label">Connecting to odds API…</p><div class="loading-bar"><span></span></div></div>';
+	setLoadingMessage('Requesting game list for ' + escapeHtml(sportKey) + '…');
 
 	try {
 		const now = new Date();
@@ -2480,23 +3624,27 @@ async function loadUpcomingForSport(sportKey, apiKey) {
 		const scoresUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/scores/?apiKey=' + encodeURIComponent(apiKey) + '&daysFrom=' + HISTORY_LOOKBACK_DAYS + '&dateFormat=iso';
 
 		const [eventResponse, oddsResponse, scoresResponse] = await Promise.all([
-			fetch(eventsUrl),
-			fetch(oddsUrl),
-			fetch(scoresUrl)
+			fetchWithTimeout(eventsUrl),
+			fetchWithTimeout(oddsUrl),
+			fetchWithTimeout(scoresUrl)
 		]);
+		const apiCreditsUsed = getApiCreditsUsedFromResponses([eventResponse, oddsResponse, scoresResponse]);
+		if (!isTrackedLoadingCurrent(loadToken)) {
+			return;
+		}
 		if (!eventResponse.ok) {
 			const message = 'Upcoming events request failed for sport: ' + sportKey;
 			throw new Error(message);
 		}
-		const payload = await eventResponse.json();
+		const payload = await safeReadJson(eventResponse, []);
 
 		let oddsPayload = [];
 		if (oddsResponse.ok) {
-			oddsPayload = await oddsResponse.json();
+			oddsPayload = await safeReadJson(oddsResponse, []);
 		}
 		let scoresPayload = [];
 		if (scoresResponse.ok) {
-			scoresPayload = await scoresResponse.json();
+			scoresPayload = await safeReadJson(scoresResponse, []);
 		}
 		const incomingHistoryRows = Array.isArray(scoresPayload) ? scoresPayload : [];
 		const existingRollingHistoryRows = readCache("rolling_history_" + sportKey);
@@ -2505,17 +3653,25 @@ async function loadUpcomingForSport(sportKey, apiKey) {
 
 		const rows = Array.isArray(payload) ? payload : [];
 		const filtered = getRowsForSelectedRange(rows, state.timeRange, rangeWindow, Array.isArray(scoresPayload) ? scoresPayload : []);
-		writeCache("upcoming_events_" + sportKey, filtered);
+		const sourceEvents = normalizeRangeKey(state.timeRange) === 'today' ? rows : filtered;
+		let cacheSavedAt = writeCache("upcoming_events_" + sportKey, sourceEvents);
 
 		const oddsRows = Array.isArray(oddsPayload) ? oddsPayload : [];
-		writeCache("upcoming_odds_" + sportKey, oddsRows);
-		writeCache("upcoming_history_" + sportKey, mergedHistoryRows);
-		writeCache("rolling_history_" + sportKey, mergedHistoryRows);
+		cacheSavedAt = Math.max(cacheSavedAt, writeCache("upcoming_odds_" + sportKey, oddsRows));
+		cacheSavedAt = Math.max(cacheSavedAt, writeCache("upcoming_history_" + sportKey, mergedHistoryRows));
+		cacheSavedAt = Math.max(cacheSavedAt, writeCache("rolling_history_" + sportKey, mergedHistoryRows));
 		const oddsByEventId = buildOddsByEventId(oddsRows);
 
-		renderUpcomingEvents(sportKey, filtered, oddsByEventId, state.timeRange, historyMap);
+		if (!isTrackedLoadingCurrent(loadToken)) {
+			return;
+		}
+		renderUpcomingEvents(sportKey, sourceEvents, oddsByEventId, state.timeRange, historyMap, { showTomorrow: false });
+		markDataLoaded(filtered.length, cacheSavedAt);
 		setStatus('Upcoming window loaded for ' + sportKey + ': ' + filtered.length + ' events', 'ok');
 	} catch (error) {
+		if (!isTrackedLoadingCurrent(loadToken)) {
+			return;
+		}
 		const message = error instanceof Error ? error.message : 'Unknown error';
 		const cachedEvents = readCache("upcoming_events_" + sportKey);
 		const cachedOddsRows = readCache("upcoming_odds_" + sportKey);
@@ -2524,16 +3680,19 @@ async function loadUpcomingForSport(sportKey, apiKey) {
 		if (Array.isArray(cachedEvents) && cachedEvents.length) {
 			const oddsByEventId = buildOddsByEventId(Array.isArray(cachedOddsRows) ? cachedOddsRows : []);
 			const historyRows = mergeRollingHistoryRows(rollingHistoryRows, cachedHistoryRows);
-			renderUpcomingEvents(sportKey, cachedEvents, oddsByEventId, state.timeRange, historyRows);
+			renderUpcomingEvents(sportKey, cachedEvents, oddsByEventId, state.timeRange, historyRows, { showTomorrow: false });
 			setStatus('Live upcoming failed: ' + message + '. Showing cached fallback data.', 'error');
 			return;
 		}
 
-		el.upcomingWrap.innerHTML = '<p class="subhead">Upcoming Games</p><div class="empty">Unable to load upcoming games.</div>';
-		setStatus('Failed loading upcoming games: ' + message, 'error');
+		el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + '</p><div class="empty">Unable to load ' + (normalizeRangeKey(state.timeRange) === 'live' ? 'live' : 'upcoming') + ' games.</div>';
+		setStatus('Failed loading ' + (normalizeRangeKey(state.timeRange) === 'live' ? 'live' : 'upcoming') + ' games: ' + message, 'error');
 	} finally {
-		state.rangeLoading = false;
-		syncRangeButtons();
+		if (isTrackedLoadingCurrent(loadToken)) {
+			state.rangeLoading = false;
+			syncRangeButtons();
+			endBusyOverlay();
+		}
 	}
 }
 
@@ -2542,8 +3701,11 @@ function renderRecentResultsForSelectedScope(scopeLabel, items) {
 	state.activeRecentSportData = null;
 	const sportTitles = Array.from(new Set((Array.isArray(items) ? items : []).map((item) => String(item && item.sportTitle ? item.sportTitle : item && item.sportKey ? item.sportKey : '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 	setResultSportOptions(sportTitles.length ? sportTitles : getRecentSportTitlesForBar(scopeLabel));
+	const emptyBacktestCardHtml = buildBacktestCardMarkup(null, [], scopeLabel);
 	if (!Array.isArray(items) || !items.length) {
-		el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p><div class="empty">No recent results found in the current selection.</div>';
+		el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p>'
+			+ emptyBacktestCardHtml
+			+ '<div class="empty">No recent results found in the current selection.</div>';
 		return;
 	}
 
@@ -2562,12 +3724,23 @@ function renderRecentResultsForSelectedScope(scopeLabel, items) {
 	const sortedItems = sortByStartDesc(visibleItems);
 	const predictedItems = [];
 	const noPredictionItems = [];
+	const evaluatedItems = [];
 	for (const item of sortedItems) {
 		const row = item.row || {};
 		const oddsRow = item.oddsRow || null;
 		const prediction = item.prediction || getPredictionForEvent(row, oddsRow, item.historyMap || null, item.sportKey || "");
 		const hasPrediction = Boolean(prediction && prediction.predictedTeam);
+		evaluatedItems.push({
+			row,
+			oddsRow,
+			prediction,
+			sportKey: item && item.sportKey ? item.sportKey : '',
+			sportTitle: item && item.sportTitle ? item.sportTitle : ''
+		});
 		if (!hasPrediction) {
+			if (hasActiveGameFilters()) {
+				continue;
+			}
 			noPredictionItems.push(item);
 			continue;
 		}
@@ -2577,6 +3750,8 @@ function renderRecentResultsForSelectedScope(scopeLabel, items) {
 		predictedItems.push(item);
 	}
 
+	const showRecentViewMoreButton = !state.activeSportKey && state.view === 'recent' && state.recentResultsLookbackDays < MAX_RECENT_RESULTS_LOOKBACK_DAYS;
+	const recentViewMoreHtml = showRecentViewMoreButton ? getRecentViewMoreMarkup() : '';
 	const cardsHtml = [...predictedItems, ...noPredictionItems].map((item) => {
 		const row = item.row || {};
 		const oddsRow = item.oddsRow || null;
@@ -2594,6 +3769,7 @@ function renderRecentResultsForSelectedScope(scopeLabel, items) {
 		const winTierClass = getTierClassFromWinChance(winChanceValue);
 		const edgeTierClass = getTierClassFromEdge(Number(prediction && prediction.edgePct));
 		const confidenceTierClass = prediction && prediction.confidence ? getTierClassFromConfidence(confidenceText, Number(prediction && prediction.edgePct), prediction && prediction.source ? prediction.source : "none") : 'tier-neutral';
+		const evBadge = buildEvBadge(prediction, row, oddsRow);
 		const completedPredictionResult = hasPrediction ? getPredictionResultForCompletedEvent(row, prediction.predictedTeam) : { label: "No prediction", tierClass: "tier-neutral" };
 		const detailsHistoryMap = item && item.historyMap ? item.historyMap : null;
 		const insightsPanel = hasPrediction
@@ -2616,8 +3792,8 @@ function renderRecentResultsForSelectedScope(scopeLabel, items) {
 		return '<article class="game-card ' + (resultClass ? escapeHtml(resultClass) : '') + '"' + cardExpandAttrs + '>'
 			+ '<div class="game-head">'
 			+ '<div class="matchup-block">'
+			+ '<p class="sport-card-title">' + escapeHtml(sportLabel) + '</p>'
 			+ '<div class="matchup-title-row">'
-			+ '<span class="meta-pill sport-tag">Sport: ' + escapeHtml(sportLabel) + '</span>'
 			+ '<p class="matchup">' + escapeHtml(home + ' vs ' + away) + '</p>'
 			+ '</div>'
 			+ '<p class="kickoff">' + escapeHtml(formatDateTime(item.start)) + '</p>'
@@ -2632,6 +3808,7 @@ function renderRecentResultsForSelectedScope(scopeLabel, items) {
 			+ '<span class="meta-pill">Score: ' + escapeHtml(scoreText) + '</span>'
 			+ winBadge
 			+ edgeBadge
+			+ evBadge
 			+ confidenceBadge
 			+ resultBadge
 			+ '</div>'
@@ -2644,18 +3821,27 @@ function renderRecentResultsForSelectedScope(scopeLabel, items) {
 	}).join('');
 
 	if (!cardsHtml) {
-		el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p><div class="empty">No recent results match your search.</div>';
+		const backtest = buildPredictionBacktestSummary(evaluatedItems);
+		const backtestCardHtml = buildBacktestCardMarkup(backtest, evaluatedItems, scopeLabel);
+		el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p>'
+			+ backtestCardHtml
+			+ '<div class="empty">No recent results match your search.</div>';
 		return;
 	}
+	const backtest = buildPredictionBacktestSummary(evaluatedItems);
+	const backtestCardHtml = buildBacktestCardMarkup(backtest, evaluatedItems, scopeLabel);
 
 	el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p>'
-		+ '<div class="upcoming-list">' + cardsHtml + '</div>';
+		+ backtestCardHtml
+		+ '<div class="upcoming-list">' + cardsHtml + '</div>'
+		+ recentViewMoreHtml;
 }
 
-async function loadRecentResultsForSelectedScope(apiKey) {
-	if (!apiKey) {
-		return;
-	}
+async function loadRecentResultsForSelectedScope(apiKey, options = {}) {
+	const loadCost = 1;
+	const forceRefresh = Boolean(options && options.forceRefresh === true);
+	const loadToken = beginTrackedLoading(0);
+	beginBusyOverlay();
 	state.rangeLoading = true;
 	syncRangeButtons();
 	setView("recent");
@@ -2663,37 +3849,127 @@ async function loadRecentResultsForSelectedScope(apiKey) {
 	state.activeRecentSportData = null;
 	renderSportsTable(state.sportsRows);
 	const scopeLabel = state.catalogScope === 'favorites' ? 'Favourites' : 'All Sports';
+	let apiCreditsUsedTotal = 0;
+	if (!Number.isFinite(state.recentResultsLookbackDays) || state.recentResultsLookbackDays < RECENT_RESULTS_LOOKBACK_DAYS) {
+		state.recentResultsLookbackDays = RECENT_RESULTS_LOOKBACK_DAYS;
+	}
+	const recentLookbackDays = Number(state.recentResultsLookbackDays) || RECENT_RESULTS_LOOKBACK_DAYS;
+	const loadingStampCost = Math.max(3, Math.max(1, (Array.isArray(state.sportsRows) && state.sportsRows.length) ? state.sportsRows.length : 1) * 3);
 	setStatus('Loading recent results for ' + scopeLabel.toLowerCase() + '...', '');
-	el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p><div class="loading-panel"><p class="loading-label">Loading recent results</p><div class="loading-bar"><span></span></div></div>';
+	el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p><div class="loading-panel"><p class="loading-label">Connecting to odds API…</p><div class="loading-bar"><span></span></div></div>';
+	setLoadingMessage('Fetching scores for ' + escapeHtml(scopeLabel) + '…');
 
 	try {
 		const sportRows = Array.isArray(state.sportsRows) ? state.sportsRows : [];
 		if (!sportRows.length) {
-			await loadSportsCatalog(apiKey);
+			apiCreditsUsedTotal += await loadSportsCatalog(apiKey, { skipLoadStamp: true });
 		}
 		const rows = getScopedSportsForLoading();
 		if (!rows.length) {
 			const emptyMessage = state.catalogScope === 'favorites'
-				? 'No favourited sports selected. Save a sport from the catalog to see recent results.'
+				? 'No favourite sports selected. Save a sport from the catalog to see recent results.'
 				: 'No sports are available in the current selection.';
 			state.allRecentResultsItems = [];
 			state.recentScopeLabel = scopeLabel;
 			setResultSportOptions([]);
 			el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p><div class="empty">' + escapeHtml(emptyMessage) + '</div>';
-			setStatus(state.catalogScope === 'favorites' ? 'No favourited sports selected.' : 'No sports available for recent results.', 'ok');
+			setStatus(state.catalogScope === 'favorites' ? 'No favourite sports selected.' : 'No sports available for recent results.', 'ok');
+			return;
+		}
+
+		const cachedRecentBySport = new Map();
+		let hasCompleteCache = true;
+		let cachedLoadedAt = 0;
+		for (const sport of rows) {
+			const sportKey = sport && sport.key ? String(sport.key) : '';
+			if (!sportKey) {
+				continue;
+			}
+			const cachedScores = readCache("recent_scores_" + sportKey);
+			if (!Array.isArray(cachedScores) || !cachedScores.length) {
+				hasCompleteCache = false;
+				break;
+			}
+			const sportCachedLoadedAt = readCacheTimestamp('recent_scores_' + sportKey);
+			if (Number.isFinite(sportCachedLoadedAt)) {
+				cachedLoadedAt = Math.max(cachedLoadedAt, sportCachedLoadedAt);
+			}
+			cachedRecentBySport.set(sportKey, {
+				scores: cachedScores,
+				oddsRows: readCache("recent_odds_" + sportKey),
+				historyRows: readCache("recent_history_" + sportKey),
+				rollingRows: readCache("rolling_history_" + sportKey)
+			});
+		}
+
+		if (hasCompleteCache && !forceRefresh) {
+			const cachedItems = [];
+			for (const sport of rows) {
+				const sportKey = sport && sport.key ? String(sport.key) : '';
+				if (!sportKey || !cachedRecentBySport.has(sportKey)) {
+					continue;
+				}
+				const cached = cachedRecentBySport.get(sportKey);
+				const historyRows = mergeRollingHistoryRows(cached.rollingRows, cached.historyRows);
+				const oddsByEventId = buildOddsByEventId(Array.isArray(cached.oddsRows) ? cached.oddsRows : []);
+				for (const row of sortByStartDesc(Array.isArray(cached.scores) ? cached.scores : [])) {
+					cachedItems.push({
+						sportKey,
+						sportTitle: sport.title ? String(sport.title) : sportKey,
+						start: row && row.commence_time ? String(row.commence_time) : '',
+						row,
+						oddsRow: row && row.id ? oddsByEventId[String(row.id)] || null : null,
+						historyMap: historyRows,
+						prediction: getPredictionForEvent(row, row && row.id ? oddsByEventId[String(row.id)] || null : null, historyRows, sportKey)
+					});
+				}
+			}
+			renderRecentResultsForSelectedScope(scopeLabel, cachedItems);
+			state.allRecentResultsItems = cachedItems.slice();
+			state.recentScopeLabel = scopeLabel;
+			markDataLoaded(cachedItems.length, cachedLoadedAt || Date.now());
+			setStatus('Loaded recent results from cache.', 'ok');
+			return;
+		}
+
+		if (state.isInitialHydration === true) {
+			setStatus('Recent cache is incomplete for this scope. Add your API key to refresh missing sports.', 'error');
+			state.allRecentResultsItems = [];
+			state.recentScopeLabel = scopeLabel;
+			setResultSportOptions([]);
+			el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p><div class="empty">No complete cached recent results were found for this scope.</div>';
+			return;
+		}
+
+		if (!String(apiKey || '').trim()) {
+			setStatus('Recent cache is incomplete. Add your API key to refresh missing sports.', 'error');
+			state.allRecentResultsItems = [];
+			state.recentScopeLabel = scopeLabel;
+			setResultSportOptions([]);
+			el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p><div class="empty">No complete cached recent results were found for this scope.</div>';
+			return;
+		}
+
+		if (!consumeSearchCredits(loadCost)) {
 			return;
 		}
 
 		const allRecentItems = [];
+		let successfulSportLoads = 0;
+		let failedSportLoads = 0;
+		let cacheSavedAt = 0;
 		for (const sport of rows) {
+			if (!isTrackedLoadingCurrent(loadToken)) {
+				return;
+			}
 			const sportKey = sport && sport.key ? String(sport.key) : '';
 			if (!sportKey) {
 				continue;
 			}
 			try {
 				const historyScoresUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/scores/?apiKey=' + encodeURIComponent(apiKey) + '&daysFrom=' + HISTORY_LOOKBACK_DAYS + '&dateFormat=iso';
-				const recentScoresUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/scores/?apiKey=' + encodeURIComponent(apiKey) + '&daysFrom=' + RECENT_RESULTS_LOOKBACK_DAYS + '&dateFormat=iso';
-				const recentWindowStart = new Date(Date.now() - (2 * 24 * 60 * 60 * 1000)).toISOString();
+				const recentScoresUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/scores/?apiKey=' + encodeURIComponent(apiKey) + '&daysFrom=' + recentLookbackDays + '&dateFormat=iso';
+				const recentWindowStart = new Date(Date.now() - ((recentLookbackDays + 1) * 24 * 60 * 60 * 1000)).toISOString();
 				const recentWindowEnd = new Date(Date.now() - GAME_START_BUFFER_MS).toISOString();
 				const oddsUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/odds/?apiKey=' + encodeURIComponent(apiKey)
 					+ '&bookmakers=sportsbet'
@@ -2704,18 +3980,22 @@ async function loadRecentResultsForSelectedScope(apiKey) {
 					+ '&commenceTimeFrom=' + encodeURIComponent(recentWindowStart)
 					+ '&commenceTimeTo=' + encodeURIComponent(recentWindowEnd);
 				const [historyScoresResponse, recentScoresResponse, oddsResponse] = await Promise.all([fetch(historyScoresUrl), fetch(recentScoresUrl), fetch(oddsUrl)]);
+				apiCreditsUsedTotal += getApiCreditsUsedFromResponses([historyScoresResponse, recentScoresResponse, oddsResponse]);
 				const historyScoresPayload = historyScoresResponse.ok ? await historyScoresResponse.json() : [];
 				const recentScoresPayload = recentScoresResponse.ok ? await recentScoresResponse.json() : [];
 				const oddsPayload = oddsResponse.ok ? await oddsResponse.json() : [];
 				const historyRows = Array.isArray(historyScoresPayload) ? historyScoresPayload : [];
 				const existingRollingHistoryRows = readCache("rolling_history_" + sportKey);
 				const mergedHistoryRows = mergeRollingHistoryRows(existingRollingHistoryRows, historyRows);
-				writeCache("rolling_history_" + sportKey, mergedHistoryRows);
+				cacheSavedAt = Math.max(cacheSavedAt, writeCache("rolling_history_" + sportKey, mergedHistoryRows));
 				const recentRows = Array.isArray(recentScoresPayload) ? recentScoresPayload : [];
 				const oddsRows = Array.isArray(oddsPayload) ? oddsPayload : [];
 				const completedHistoryRows = filterPastResults(mergedHistoryRows, GAME_START_BUFFER_MS);
 				const completedRecentRows = filterPastResults(recentRows, GAME_START_BUFFER_MS);
 				const eligibleRecentRows = completedRecentRows.length ? completedRecentRows : completedHistoryRows;
+				cacheSavedAt = Math.max(cacheSavedAt, writeCache("recent_scores_" + sportKey, eligibleRecentRows));
+				cacheSavedAt = Math.max(cacheSavedAt, writeCache("recent_odds_" + sportKey, oddsRows));
+				cacheSavedAt = Math.max(cacheSavedAt, writeCache("recent_history_" + sportKey, mergedHistoryRows));
 				const oddsByEventId = buildOddsByEventId(oddsRows);
 				const previousGames = eligibleRecentRows
 					.filter((row) => row && (row.home_team || row.away_team) && row.commence_time)
@@ -2740,9 +4020,6 @@ async function loadRecentResultsForSelectedScope(apiKey) {
 						});
 						continue;
 					}
-					if (!matchesWinRateFilter(prediction)) {
-						continue;
-					}
 					allRecentItems.push({
 						sportKey,
 						sportTitle: sport.title ? String(sport.title) : sportKey,
@@ -2753,17 +4030,38 @@ async function loadRecentResultsForSelectedScope(apiKey) {
 						prediction
 					});
 				}
+				successfulSportLoads += 1;
 			} catch {
+				failedSportLoads += 1;
 				continue;
 			}
 		}
 
+		if (!successfulSportLoads && failedSportLoads > 0) {
+			throw new Error('All sport requests failed while loading recent results.');
+		}
+
+		if (!isTrackedLoadingCurrent(loadToken)) {
+			return;
+		}
+		const backtest = buildPredictionBacktestSummary(allRecentItems);
+		if (backtest) {
+			saveBacktestSnapshot(scopeLabel, backtest, buildPerSportBacktestBreakdown(allRecentItems));
+		}
 		renderRecentResultsForSelectedScope(scopeLabel, allRecentItems);
 		state.allRecentResultsItems = allRecentItems.slice();
 		state.recentScopeLabel = scopeLabel;
-		markDataLoaded();
-		setStatus('Recent results loaded for ' + scopeLabel.toLowerCase() + ': ' + allRecentItems.length + ' games', 'ok');
+		markDataLoaded(allRecentItems.length, cacheSavedAt || Date.now());
+		setStatus(
+			backtest
+				? 'Recent results loaded for ' + scopeLabel.toLowerCase() + ': ' + allRecentItems.length + ' games | Backtest (' + backtest.sampleSize + '): Ensemble ' + backtest.ensembleAccuracy.toFixed(1) + '% / Brier ' + backtest.ensembleBrier.toFixed(3) + ' vs Baseline ' + (Number.isFinite(backtest.baselineAccuracy) ? backtest.baselineAccuracy.toFixed(1) + '%' : 'N/A') + ' / ' + (Number.isFinite(backtest.baselineBrier) ? backtest.baselineBrier.toFixed(3) : 'N/A')
+				: 'Recent results loaded for ' + scopeLabel.toLowerCase() + ': ' + allRecentItems.length + ' games',
+			'ok'
+		);
 	} catch (error) {
+		if (!isTrackedLoadingCurrent(loadToken)) {
+			return;
+		}
 		const message = error instanceof Error ? error.message : 'Unknown error';
 		state.allRecentResultsItems = [];
 		state.recentScopeLabel = scopeLabel;
@@ -2771,31 +4069,59 @@ async function loadRecentResultsForSelectedScope(apiKey) {
 		el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p><div class="empty">Unable to load recent results.</div>';
 		setStatus('Failed loading recent results: ' + message, 'error');
 	} finally {
-		state.rangeLoading = false;
-		syncRangeButtons();
+		if (isTrackedLoadingCurrent(loadToken)) {
+			state.rangeLoading = false;
+			syncRangeButtons();
+			endBusyOverlay();
+		}
 	}
 }
 
-async function loadRecentResultsForSport(sportKey, apiKey) {
+async function loadRecentResultsForSport(sportKey, apiKey, options = {}) {
 	if (!sportKey) {
 		return;
 	}
-	state.rangeLoading = true;
-	syncRangeButtons();
+	const loadCost = 1;
+	const forceRefresh = Boolean(options && options.forceRefresh === true);
 	setView("recent");
 	state.activeSportKey = sportKey;
 	renderSportsTable(state.sportsRows);
+
+	const cachedScores = readCache("recent_scores_" + sportKey);
+	const cachedOddsRows = readCache("recent_odds_" + sportKey);
+	const cachedHistoryRows = readCache("recent_history_" + sportKey);
+	const rollingHistoryRows = readCache("rolling_history_" + sportKey);
+	if (Array.isArray(cachedScores) && cachedScores.length && !forceRefresh) {
+		const oddsByEventId = buildOddsByEventId(Array.isArray(cachedOddsRows) ? cachedOddsRows : []);
+		const historyRows = mergeRollingHistoryRows(rollingHistoryRows, cachedHistoryRows);
+		renderRecentResults(sportKey, cachedScores, oddsByEventId, historyRows);
+		const cachedLoadedAt = readCacheTimestamp('recent_scores_' + sportKey);
+		markDataLoaded(cachedScores.length, Number.isFinite(cachedLoadedAt) ? cachedLoadedAt : Date.now());
+		setStatus('Loaded recent results from cache.', 'ok');
+		return;
+	}
+
+	if (!consumeSearchCredits(loadCost)) {
+		return;
+	}
+	const loadToken = beginTrackedLoading(loadCost);
+	const loadingStampCost = 3;
+	beginBusyOverlay();
+	state.rangeLoading = true;
+	syncRangeButtons();
 	setStatus("Loading recent results for " + sportKey + "...", "");
-	el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results</p><div class="loading-panel"><p class="loading-label">Loading results</p><div class="loading-bar"><span></span></div></div>';
+	el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results</p><div class="loading-panel"><p class="loading-label">Connecting to odds API…</p><div class="loading-bar"><span></span></div></div>';
+	setLoadingMessage('Fetching scores for ' + escapeHtml(sportKey) + '…');
 
 	try {
+		const recentLookbackDays = Math.max(RECENT_RESULTS_LOOKBACK_DAYS, Number(state.recentResultsLookbackDays) || RECENT_RESULTS_LOOKBACK_DAYS);
 		const historyScoresUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/scores/?apiKey='
 			+ encodeURIComponent(apiKey)
 			+ '&daysFrom=' + HISTORY_LOOKBACK_DAYS
 			+ '&dateFormat=iso';
 		const recentScoresUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/scores/?apiKey='
 			+ encodeURIComponent(apiKey)
-			+ '&daysFrom=' + RECENT_RESULTS_LOOKBACK_DAYS
+			+ '&daysFrom=' + recentLookbackDays
 			+ '&dateFormat=iso';
 		const oddsUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/odds/?apiKey='
 			+ encodeURIComponent(apiKey)
@@ -2805,13 +4131,17 @@ async function loadRecentResultsForSport(sportKey, apiKey) {
 			+ '&oddsFormat=decimal'
 			+ '&dateFormat=iso';
 
-		const responses = await Promise.all([fetch(historyScoresUrl), fetch(recentScoresUrl), fetch(oddsUrl)]);
+		const responses = await Promise.all([fetchWithTimeout(historyScoresUrl), fetchWithTimeout(recentScoresUrl), fetchWithTimeout(oddsUrl)]);
+		const apiCreditsUsed = getApiCreditsUsedFromResponses(responses);
+		if (!isTrackedLoadingCurrent(loadToken)) {
+			return;
+		}
 		const historyResponse = responses[0];
 		const recentResponse = responses[1];
 		const oddsResponse = responses[2];
-		const historyPayload = await historyResponse.json();
-		const recentPayload = await recentResponse.json();
-		const oddsPayload = await oddsResponse.json();
+		const historyPayload = await safeReadJson(historyResponse, []);
+		const recentPayload = await safeReadJson(recentResponse, []);
+		const oddsPayload = await safeReadJson(oddsResponse, []);
 		const historyRows = Array.isArray(historyPayload) ? historyPayload : [];
 		const existingRollingHistoryRows = readCache("rolling_history_" + sportKey);
 		const mergedHistoryRows = mergeRollingHistoryRows(existingRollingHistoryRows, historyRows);
@@ -2819,7 +4149,7 @@ async function loadRecentResultsForSport(sportKey, apiKey) {
 		const rows = Array.isArray(recentPayload) ? recentPayload : [];
 
 		if (!recentResponse.ok) {
-			const message = recentPayload && recentPayload.message ? String(recentPayload.message) : 'Request failed';
+			const message = recentPayload && recentPayload.message ? String(recentPayload.message) : (recentResponse.statusText || 'Request failed');
 			throw new Error(message);
 		}
 
@@ -2829,14 +4159,13 @@ async function loadRecentResultsForSport(sportKey, apiKey) {
 			return bTs - aTs;
 		});
 		const recentGames = sorted.length ? sorted : filterPastResults(mergedHistoryRows, GAME_START_BUFFER_MS);
-		writeCache("recent_scores_" + sportKey, recentGames);
-	 	writeCache("recent_history_" + sportKey, mergedHistoryRows);
+		let cacheSavedAt = writeCache("recent_scores_" + sportKey, recentGames);
+		cacheSavedAt = Math.max(cacheSavedAt, writeCache("recent_history_" + sportKey, mergedHistoryRows));
 
 		const oddsRows = oddsResponse.ok && Array.isArray(oddsPayload) ? oddsPayload : [];
-		writeCache("recent_odds_" + sportKey, oddsRows);
+		cacheSavedAt = Math.max(cacheSavedAt, writeCache("recent_odds_" + sportKey, oddsRows));
 		const oddsByEventId = buildOddsByEventId(oddsRows);
 
-		renderRecentResults(sportKey, recentGames, oddsByEventId, mergedHistoryRows);
 		state.allRecentResultsItems = sortByStartDesc(recentGames).map((row) => ({
 			sportKey,
 			sportTitle: state.sportsByKey[sportKey] && state.sportsByKey[sportKey].title ? String(state.sportsByKey[sportKey].title) : sportKey,
@@ -2846,9 +4175,29 @@ async function loadRecentResultsForSport(sportKey, apiKey) {
 			historyMap: mergedHistoryRows
 		}));
 		state.recentScopeLabel = state.sportsByKey[sportKey] && state.sportsByKey[sportKey].title ? String(state.sportsByKey[sportKey].title) : sportKey;
-		markDataLoaded();
-		setStatus('Recent results loaded for ' + sportKey + ': ' + recentGames.length + ' games', 'ok');
+		const scoredItemsForBacktest = state.allRecentResultsItems.map((item) => ({
+			...item,
+			prediction: getPredictionForEvent(item.row, item.oddsRow, item.historyMap || null, item.sportKey || '')
+		}));
+		const backtest = buildPredictionBacktestSummary(scoredItemsForBacktest);
+		if (backtest) {
+			saveBacktestSnapshot(sportKey, backtest, buildPerSportBacktestBreakdown(scoredItemsForBacktest));
+		}
+		if (!isTrackedLoadingCurrent(loadToken)) {
+			return;
+		}
+		renderRecentResults(sportKey, recentGames, oddsByEventId, mergedHistoryRows);
+		markDataLoaded(recentGames.length, cacheSavedAt);
+		setStatus(
+			backtest
+				? 'Recent results loaded for ' + sportKey + ': ' + recentGames.length + ' games | Backtest (' + backtest.sampleSize + '): Ensemble ' + backtest.ensembleAccuracy.toFixed(1) + '% / Brier ' + backtest.ensembleBrier.toFixed(3) + ' vs Baseline ' + (Number.isFinite(backtest.baselineAccuracy) ? backtest.baselineAccuracy.toFixed(1) + '%' : 'N/A') + ' / ' + (Number.isFinite(backtest.baselineBrier) ? backtest.baselineBrier.toFixed(3) : 'N/A')
+				: 'Recent results loaded for ' + sportKey + ': ' + recentGames.length + ' games',
+			'ok'
+		);
 	} catch (error) {
+		if (!isTrackedLoadingCurrent(loadToken)) {
+			return;
+		}
 		const message = error instanceof Error ? error.message : 'Unknown error';
 		const cachedScores = readCache("recent_scores_" + sportKey);
 		const cachedOddsRows = readCache("recent_odds_" + sportKey);
@@ -2858,7 +4207,7 @@ async function loadRecentResultsForSport(sportKey, apiKey) {
 			const oddsByEventId = buildOddsByEventId(Array.isArray(cachedOddsRows) ? cachedOddsRows : []);
 			const historyRows = mergeRollingHistoryRows(rollingHistoryRows, cachedHistoryRows);
 			renderRecentResults(sportKey, cachedScores, oddsByEventId, historyRows);
-			setStatus('Live recent results failed: ' + message + '. Showing cached fallback data.', 'error');
+			setStatus('Recent results request failed: ' + message + '. Showing cached fallback data.', 'error');
 			return;
 		}
 
@@ -2868,29 +4217,40 @@ async function loadRecentResultsForSport(sportKey, apiKey) {
 		setResultSportOptions([]);
 		setStatus('Failed loading recent results: ' + message, 'error');
 	} finally {
-		state.rangeLoading = false;
-		syncRangeButtons();
+		if (isTrackedLoadingCurrent(loadToken)) {
+			state.rangeLoading = false;
+			syncRangeButtons();
+			endBusyOverlay();
+		}
 	}
 }
 
-async function loadAllSportsUpcoming(apiKey) {
-	if (!apiKey) {
-		return;
-	}
+async function loadAllSportsUpcoming(apiKey, options = {}) {
+	const loadCost = 1;
+	const forceRefresh = Boolean(options && options.forceRefresh === true);
+	const loadToken = beginTrackedLoading(0);
+	beginBusyOverlay();
 	state.rangeLoading = true;
 	syncRangeButtons();
 	setView('upcoming');
 	state.activeSportKey = "";
 	state.activeUpcomingSportData = null;
+	state.upcomingSavedSportsShowTomorrow = false;
+	persistRefreshViewState();
 	const scopeLabel = state.catalogScope === 'favorites' ? 'Favourites' : 'All Sports';
 	const rangeLabel = getRangeLabel(state.timeRange);
+	const loadingStampCost = Math.max(3, Math.max(1, (Array.isArray(state.sportsRows) && state.sportsRows.length) ? state.sportsRows.length : 1) * 3);
+	let apiCreditsUsedTotal = 0;
+	let usedLiveRefresh = false;
 	setStatus('Checking ' + scopeLabel.toLowerCase() + ' for ' + rangeLabel.toLowerCase() + '...', '');
-	el.upcomingWrap.innerHTML = '<p class="subhead">Upcoming Games | ' + escapeHtml(scopeLabel) + '</p><div class="loading-panel"><p class="loading-label">Loading upcoming games</p><div class="loading-bar"><span></span></div></div>';
+	el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + ' | ' + escapeHtml(scopeLabel) + '</p><div class="loading-panel"><p class="loading-label">' + escapeHtml(getLoadingStampLabel(loadingStampCost)) + '</p><div class="loading-bar"><span></span></div></div>';
 
 	try {
-		const sportRows = Array.isArray(state.sportsRows) ? state.sportsRows : [];
-		if (!sportRows.length) {
-			await loadSportsCatalog(apiKey);
+		const sportRows = Array.isArray(state.sportsRows) && state.sportsRows.length
+			? state.sportsRows
+			: (Array.isArray(readCache("sports_catalog")) ? readCache("sports_catalog") : []);
+		if (!Array.isArray(state.sportsRows) || !state.sportsRows.length) {
+			renderSportsTable(Array.isArray(sportRows) ? sportRows : []);
 		}
 		const rows = getScopedSportsForLoading();
 		state.favoriteUpcomingSportTitles = rows
@@ -2898,116 +4258,183 @@ async function loadAllSportsUpcoming(apiKey) {
 			.filter(Boolean);
 		if (!rows.length) {
 			const emptyMessage = state.catalogScope === 'favorites'
-				? 'No favourited sports selected. Save a sport from the catalog to see its games.'
+				? 'No favourite sports selected. Save a sport from the catalog to see its games.'
 				: 'No sports were available to load for this range.';
 			state.allUpcomingGames = [];
 			setResultSportOptions([]);
-			el.upcomingWrap.innerHTML = '<p class="subhead">Upcoming Games | ' + escapeHtml(scopeLabel) + ' | ' + escapeHtml(rangeLabel) + '</p><div class="empty">' + escapeHtml(emptyMessage) + '</div>';
-			setStatus(state.catalogScope === 'favorites' ? 'No favourited sports selected.' : 'No sports available for this range.', 'ok');
+			el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + ' | ' + escapeHtml(scopeLabel) + ' | ' + escapeHtml(rangeLabel) + '</p><div class="empty">' + escapeHtml(emptyMessage) + '</div>';
+			setStatus(state.catalogScope === 'favorites' ? 'No favourite sports selected.' : 'No sports available for this range.', 'ok');
 			return;
 		}
 		const allGames = [];
+		const isTodayRange = normalizeRangeKey(state.timeRange) === 'today';
 		const rangeWindow = getRangeWindow(state.timeRange);
+		let cacheSavedAt = 0;
 		for (const sport of rows) {
+			if (!isTrackedLoadingCurrent(loadToken)) {
+				return;
+			}
 			const sportKey = sport && sport.key ? String(sport.key) : '';
 			if (!sportKey) {
 				continue;
 			}
 
-			try {
-				const eventsUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/events/?apiKey='
-					+ encodeURIComponent(apiKey)
-					+ '&dateFormat=iso';
-				const oddsUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/odds/?apiKey='
-					+ encodeURIComponent(apiKey)
-					+ '&bookmakers=sportsbet'
-					+ '&regions=au,us,uk,eu'
-					+ '&markets=h2h'
-					+ '&oddsFormat=decimal'
-					+ '&dateFormat=iso';
-				const historyUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/scores/?apiKey='
-					+ encodeURIComponent(apiKey)
-					+ '&daysFrom=' + HISTORY_LOOKBACK_DAYS
-					+ '&dateFormat=iso';
+			const cachedEvents = readCache("upcoming_events_" + sportKey);
+			const cachedOddsRows = readCache("upcoming_odds_" + sportKey);
+			const cachedHistoryRows = readCache("upcoming_history_" + sportKey);
+			const rollingHistoryRows = readCache("rolling_history_" + sportKey);
+			const shouldForceCacheOnHydration = state.isInitialHydration === true;
+			const canUseCache = Array.isArray(cachedEvents)
+				&& cachedEvents.length > 0
+				&& !forceRefresh
+				&& (shouldForceCacheOnHydration || !shouldRefreshCachedEvents(cachedEvents));
 
-				const [eventResponse, oddsResponse, historyResponse] = await Promise.all([
-					fetch(eventsUrl),
-					fetch(oddsUrl),
-					fetch(historyUrl)
-				]);
-				if (!eventResponse.ok) {
+			let sourceRows = [];
+			let oddsByEventId = {};
+			let historyMap = {};
+
+			if (canUseCache) {
+				oddsByEventId = buildOddsByEventId(Array.isArray(cachedOddsRows) ? cachedOddsRows : []);
+				const mergedHistoryRows = mergeRollingHistoryRows(rollingHistoryRows, cachedHistoryRows);
+				historyMap = buildTeamHistoryMap(mergedHistoryRows);
+				sourceRows = Array.isArray(cachedEvents) ? cachedEvents : [];
+				const cachedLoadedAt = readCacheTimestamp('upcoming_events_' + sportKey);
+				if (Number.isFinite(cachedLoadedAt)) {
+					cacheSavedAt = Math.max(cacheSavedAt, cachedLoadedAt);
+				}
+			} else {
+				if (state.isInitialHydration === true) {
 					continue;
 				}
-				const eventPayload = await eventResponse.json();
-				if (!Array.isArray(eventPayload)) {
+				if (!String(apiKey || '').trim()) {
 					continue;
 				}
-
-				let oddsPayload = [];
-				if (oddsResponse.ok) {
-					oddsPayload = await oddsResponse.json();
+				if (!usedLiveRefresh) {
+					if (!consumeSearchCredits(loadCost)) {
+						return;
+					}
+					usedLiveRefresh = true;
 				}
-				let historyPayload = [];
-				if (historyResponse.ok) {
-					historyPayload = await historyResponse.json();
-				}
-				const oddsByEventId = buildOddsByEventId(Array.isArray(oddsPayload) ? oddsPayload : []);
-				const existingRollingHistoryRows = readCache("rolling_history_" + sportKey);
-				const mergedHistoryRows = mergeRollingHistoryRows(existingRollingHistoryRows, Array.isArray(historyPayload) ? historyPayload : []);
-				writeCache("rolling_history_" + sportKey, mergedHistoryRows);
-				const historyMap = buildTeamHistoryMap(mergedHistoryRows);
-				const filtered = getRowsForSelectedRange(eventPayload, state.timeRange, rangeWindow, Array.isArray(historyPayload) ? historyPayload : []);
 
-				for (const eventRow of filtered) {
-					const eventId = eventRow && eventRow.id ? String(eventRow.id) : '';
-					const prediction = getPredictionForEvent(eventRow, eventId ? oddsByEventId[eventId] : null, historyMap, sportKey);
-					if (!matchesWinRateFilter(prediction)) {
+				try {
+					const eventsUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/events/?apiKey='
+						+ encodeURIComponent(apiKey)
+						+ '&dateFormat=iso';
+					const oddsUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/odds/?apiKey='
+						+ encodeURIComponent(apiKey)
+						+ '&bookmakers=sportsbet'
+						+ '&regions=au,us,uk,eu'
+						+ '&markets=h2h'
+						+ '&oddsFormat=decimal'
+						+ '&dateFormat=iso';
+					const historyUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/scores/?apiKey='
+						+ encodeURIComponent(apiKey)
+						+ '&daysFrom=' + HISTORY_LOOKBACK_DAYS
+						+ '&dateFormat=iso';
+
+					const [eventResponse, oddsResponse, historyResponse] = await Promise.all([
+						fetchWithTimeout(eventsUrl),
+						fetchWithTimeout(oddsUrl),
+						fetchWithTimeout(historyUrl)
+					]);
+					apiCreditsUsedTotal += getApiCreditsUsedFromResponses([eventResponse, oddsResponse, historyResponse]);
+					if (!isTrackedLoadingCurrent(loadToken)) {
+						return;
+					}
+					if (!eventResponse.ok) {
 						continue;
 					}
-					const winChanceValue = getPredictionWinRateValue(prediction);
-					if (state.winRateFilter !== 'all' && !Number.isFinite(winChanceValue)) {
+					const eventPayload = await safeReadJson(eventResponse, []);
+					if (!Array.isArray(eventPayload)) {
 						continue;
 					}
-					allGames.push({
-						sportKey,
-						sportTitle: sport.title ? String(sport.title) : sportKey,
-						home: eventRow && eventRow.home_team ? String(eventRow.home_team) : 'Home',
-						away: eventRow && eventRow.away_team ? String(eventRow.away_team) : 'Away',
-						start: eventRow && eventRow.commence_time ? String(eventRow.commence_time) : '',
-						prediction,
-						row: eventRow,
-						oddsRow: eventId ? oddsByEventId[eventId] : null,
-						historyMap
-					});
-				}
 
-			} catch {
-				continue;
+					let oddsPayload = [];
+					if (oddsResponse.ok) {
+						oddsPayload = await safeReadJson(oddsResponse, []);
+					}
+					let historyPayload = [];
+					if (historyResponse.ok) {
+						historyPayload = await safeReadJson(historyResponse, []);
+					}
+					oddsByEventId = buildOddsByEventId(Array.isArray(oddsPayload) ? oddsPayload : []);
+					const existingRollingHistoryRows = readCache("rolling_history_" + sportKey);
+					const mergedHistoryRows = mergeRollingHistoryRows(existingRollingHistoryRows, Array.isArray(historyPayload) ? historyPayload : []);
+					cacheSavedAt = Math.max(cacheSavedAt, writeCache("rolling_history_" + sportKey, mergedHistoryRows));
+					historyMap = buildTeamHistoryMap(mergedHistoryRows);
+					const filtered = getRowsForSelectedRange(eventPayload, state.timeRange, rangeWindow, Array.isArray(historyPayload) ? historyPayload : []);
+					sourceRows = isTodayRange ? eventPayload : filtered;
+					cacheSavedAt = Math.max(cacheSavedAt, writeCache("upcoming_events_" + sportKey, sourceRows));
+					cacheSavedAt = Math.max(cacheSavedAt, writeCache("upcoming_odds_" + sportKey, Array.isArray(oddsPayload) ? oddsPayload : []));
+					cacheSavedAt = Math.max(cacheSavedAt, writeCache("upcoming_history_" + sportKey, mergedHistoryRows));
+				} catch {
+					continue;
+				}
+			}
+
+			for (const eventRow of sourceRows) {
+				if (normalizeRangeKey(state.timeRange) !== 'live' && isLiveEventRow(eventRow)) {
+					continue;
+				}
+				const eventId = eventRow && eventRow.id ? String(eventRow.id) : '';
+				const prediction = getPredictionForEvent(eventRow, eventId ? oddsByEventId[eventId] : null, historyMap, sportKey);
+				if (!matchesWinRateFilter(prediction)) {
+					continue;
+				}
+				const winChanceValue = getPredictionWinRateValue(prediction);
+				if (state.winRateFilter !== 'all' && !Number.isFinite(winChanceValue)) {
+					continue;
+				}
+				allGames.push({
+					sportKey,
+					sportTitle: sport.title ? String(sport.title) : sportKey,
+					home: eventRow && eventRow.home_team ? String(eventRow.home_team) : 'Home',
+					away: eventRow && eventRow.away_team ? String(eventRow.away_team) : 'Away',
+					start: eventRow && eventRow.commence_time ? String(eventRow.commence_time) : '',
+					prediction,
+					row: eventRow,
+					oddsRow: eventId ? oddsByEventId[eventId] : null,
+					historyMap
+				});
 			}
 		}
 
 		if (!allGames.length) {
 			const rangeLabel = getRangeLabel(state.timeRange);
 			setResultSportOptions([]);
-			el.upcomingWrap.innerHTML = '<p class="subhead">Upcoming Games | All Sports | ' + escapeHtml(rangeLabel) + '</p><div class="empty">No favored games found in the selected range.</div>';
-			setStatus('No favored games found for all sports in this range.', 'ok');
+			el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + ' | All Sports | ' + escapeHtml(rangeLabel) + '</p><div class="empty">No games found in the selected range.</div>';
+			setStatus('No games found for all sports in this range.', 'ok');
 			return;
 		}
 
 		state.allUpcomingGames = allGames;
 		state.upcomingVisibleSportCount = state.favoriteUpcomingSportTitles.length || 5;
+		if (!isTrackedLoadingCurrent(loadToken)) {
+			return;
+		}
 		renderUpcomingSportBatch();
-		markDataLoaded();
-		setStatus('Loaded favorited games for all sports in ' + getRangeLabel(state.timeRange).toLowerCase() + '.', 'ok');
+		markDataLoaded(allGames.length, cacheSavedAt || Date.now());
+		setStatus(
+			apiCreditsUsedTotal > 0
+				? 'Loaded favourite games for all sports in ' + getRangeLabel(state.timeRange).toLowerCase() + '.'
+				: 'Loaded games from cache. Auto-refresh happens 6 minutes before next game.',
+			'ok'
+		);
 	} catch (error) {
+		if (!isTrackedLoadingCurrent(loadToken)) {
+			return;
+		}
 		const message = error instanceof Error ? error.message : 'Unknown error';
 		state.allUpcomingGames = [];
 		state.favoriteUpcomingSportTitles = [];
 		setResultSportOptions([]);
-		el.upcomingWrap.innerHTML = '<p class="subhead">Upcoming Games | All Sports</p><div class="empty">Unable to load all sports favorites.</div>';
-		setStatus('Failed loading all sports favorites: ' + message, 'error');
+		el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(state.timeRange)) + ' | All Sports</p><div class="empty">Unable to load favourite games for all sports.</div>';
+		setStatus('Failed loading favourite games for all sports: ' + message, 'error');
 	} finally {
-		state.rangeLoading = false;
-		syncRangeButtons();
+		if (isTrackedLoadingCurrent(loadToken)) {
+			state.rangeLoading = false;
+			syncRangeButtons();
+			endBusyOverlay();
+		}
 	}
 }

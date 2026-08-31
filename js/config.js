@@ -1,16 +1,27 @@
 // --- App state, storage keys and shared browser state ---
 const STORAGE_KEY = "keieye_home_api_key_v1";
 const LEGACY_STORAGE_KEY = "keieye_betting_api_keys";
+const SAVED_API_KEYS_KEY = "keieye_saved_api_keys_v1";
+const SECURE_MODE_KEY = "keieye_secure_mode_v1";
 const SAVED_SPORTS_KEY = "keieye_saved_sports_v1";
 const SAVED_SPORTS_BACKUP_KEY = "keieye_saved_sports_backup_v1";
 const SAVED_SPORTS_SESSION_KEY = "keieye_saved_sports_session_v1";
 const BASE_URL = "https://api.the-odds-api.com/v4";
 const CACHE_VERSION = "v1";
 const GAME_START_BUFFER_MS = 60 * 1000;
-const CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 365;
+const REFRESH_BEFORE_NEXT_GAME_MS = 10 * 60 * 1000;
 const MIN_VISIBLE_WIN_RATE = 50;
 const RANGE_SELECTION_KEY = "keieye_selected_range_v1";
 const LAST_DATA_LOAD_KEY = "keieye_last_data_load_v1";
+const GAME_FILTERS_KEY = "keieye_game_filters_v1";
+const REFRESH_VIEW_STATE_KEY = "keieye_refresh_view_state_v1";
+const SEARCH_CREDITS_KEY = "keieye_search_credits_v1";
+const NETWORK_TIMEOUT_MS = 25000;
+const MAX_SEARCH_INPUT_LENGTH = 120;
+const MAX_API_KEY_LENGTH = 256;
+const MAX_SAVED_API_KEYS = 20;
+const MAX_SEARCH_CREDITS = 20;
 
 const el = {
 	infoBtn: document.getElementById("infoBtn"),
@@ -21,22 +32,34 @@ const el = {
 	predictionInfoModal: document.getElementById("predictionInfoModal"),
 	predictionInfoModalTitle: document.getElementById("predictionInfoModalTitle"),
 	predictionInfoModalCloseBtn: document.querySelector('.prediction-info-modal .modal-close'),
+	logoutConfirmModal: document.getElementById("logoutConfirmModal"),
+	cancelLogoutBtn: document.getElementById("cancelLogoutBtn"),
+	confirmLogoutBtn: document.getElementById("confirmLogoutBtn"),
 	apiKeyLabel: document.querySelector('label[for="apiKeyInput"]'),
+	savedApiKeySelect: document.getElementById("savedApiKeySelect"),
 	apiKeyInput: document.getElementById("apiKeyInput"),
 	swapApiKeyBtn: document.getElementById("swapApiKeyBtn"),
-	apiKeyMasked: document.getElementById("apiKeyMasked"),
 	clearHistoryCacheBtn: document.getElementById("clearHistoryCacheBtn"),
 	cancelApiKeyBtn: document.getElementById("cancelApiKeyBtn"),
 	saveApiKeyBtn: document.getElementById("saveApiKeyBtn"),
 	resultsSportScopeSelect: document.getElementById("resultsSportScopeSelect"),
 	resultsSportScopeLabel: document.getElementById("resultsSportScopeLabel"),
+	gameFilterGroup: document.getElementById("gameFilterGroup"),
+	secureModeToggleBtn: document.getElementById("secureModeToggleBtn"),
 	settingsPanel: document.querySelector('.settings-panel'),
 	pageTitle: document.getElementById("pageTitle"),
 	panelSub: document.getElementById("panelSub"),
+	authStatusBtn: document.getElementById("authStatusBtn"),
 	backBtn: document.getElementById("backBtn"),
+	refreshFeedBtn: document.getElementById("refreshFeedBtn"),
 	logoutBtn: document.getElementById("logoutBtn"),
 	status: document.getElementById("status"),
 	sportsSearchInput: document.getElementById("sportsSearchInput"),
+	searchToggleBtn: document.getElementById("searchToggleBtn"),
+	globalLoadingOverlay: document.getElementById("globalLoadingOverlay"),
+	searchCreditBar: null,
+	searchCreditCount: null,
+	resetSearchCreditsBtn: null,
 	tableWrap: document.getElementById("tableWrap"),
 	upcomingWrap: document.getElementById("upcomingWrap"),
 	sportFilterBar: document.getElementById("sportFilterBar"),
@@ -52,6 +75,8 @@ const state = {
 	view: "catalog",
 	savedSports: [],
 	apiKey: "",
+	savedApiKeys: [],
+	secureMode: true,
 	timeRange: "today",
 	catalogScope: "all",
 	catalogSearch: "",
@@ -63,26 +88,297 @@ const state = {
 	allUpcomingGames: [],
 	favoriteUpcomingSportTitles: [],
 	upcomingVisibleSportCount: 5,
+	upcomingSavedSportsShowTomorrow: false,
 	allRecentResultsItems: [],
 	recentScopeLabel: '',
+	recentResultsLookbackDays: 2,
+	backtestTrendWindow: 5,
 	resultSportOptions: [],
 	resultSportFilter: 'all',
+	pendingResultSportFilter: '',
 	favoriteFlash: null,
 	favoriteFlashTimerId: null,
+	searchBarExpanded: false,
+	apiKeyLogoutConfirmArmed: false,
 	rangeButtonsEnabled: false,
 	timeRangeSelected: false,
 	winRateFilter: 'all',
+	gameFilters: {
+		positiveEv: false,
+		greenWinRate: false,
+		positiveEdge: false
+	},
+	exampleStake: 100,
 	rangeLoading: false,
 	preloadedRangeData: {
 		today: null,
 		live: null,
 		pastWeek: null
 	},
-	lastLoadedAt: null
+	lastLoadedAt: null,
+	lastLoadCreditCost: 0,
+	searchCreditsRemaining: MAX_SEARCH_CREDITS,
+	activeLoadingToken: 0,
+	settingsModalCloseTimerId: null,
+	statusHideTimerId: null,
+	busyOverlayCount: 0,
+	isInitialHydration: false
 };
+
+function clampSearchCredits(value) {
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed)) {
+		return MAX_SEARCH_CREDITS;
+	}
+	return Math.max(0, Math.min(MAX_SEARCH_CREDITS, Math.trunc(parsed)));
+}
+
+function readSearchCredits() {
+	try {
+		const raw = localStorage.getItem(SEARCH_CREDITS_KEY);
+		if (!raw) {
+			return MAX_SEARCH_CREDITS;
+		}
+		return clampSearchCredits(raw);
+	} catch {
+		return MAX_SEARCH_CREDITS;
+	}
+}
+
+function persistSearchCredits() {
+	try {
+		localStorage.setItem(SEARCH_CREDITS_KEY, String(clampSearchCredits(state.searchCreditsRemaining)));
+	} catch {
+		// Ignore storage failures for credits.
+	}
+}
+
+function syncSearchCreditsUi() {
+	const remaining = clampSearchCredits(state.searchCreditsRemaining);
+	state.searchCreditsRemaining = remaining;
+	if (el.searchCreditCount) {
+		el.searchCreditCount.textContent = remaining + ' / ' + MAX_SEARCH_CREDITS;
+	}
+	if (el.searchCreditBar) {
+		el.searchCreditBar.classList.toggle('is-empty', remaining <= 0);
+	}
+}
+
+function consumeSearchCredits(cost = 1) {
+	const normalizedCost = Math.max(1, Math.trunc(Number(cost) || 1));
+	const remaining = clampSearchCredits(state.searchCreditsRemaining);
+	if (remaining < normalizedCost) {
+		setStatus('No search credits remaining. Refresh or reset to continue.', 'error');
+		syncSearchCreditsUi();
+		return false;
+	}
+	state.searchCreditsRemaining = remaining - normalizedCost;
+	persistSearchCredits();
+	syncSearchCreditsUi();
+	return true;
+}
+
+function resetSearchCredits() {
+	state.searchCreditsRemaining = MAX_SEARCH_CREDITS;
+	persistSearchCredits();
+	syncSearchCreditsUi();
+	setStatus('Search credits reset to ' + MAX_SEARCH_CREDITS + '.', 'ok');
+}
+
+function beginTrackedLoading(creditCost = 0) {
+	state.activeLoadingToken = Math.max(0, Number(state.activeLoadingToken) || 0) + 1;
+	state.lastLoadCreditCost = Math.max(0, Math.trunc(Number(creditCost) || 0));
+	return state.activeLoadingToken;
+}
+
+function isTrackedLoadingCurrent(token) {
+	return Number(token) > 0 && Number(token) === Number(state.activeLoadingToken);
+}
+
+function cancelTrackedLoading(exitMessage = 'Exit loading screen.') {
+	state.activeLoadingToken = Math.max(0, Number(state.activeLoadingToken) || 0) + 1;
+	state.rangeLoading = false;
+	state.busyOverlayCount = 0;
+	if (el.globalLoadingOverlay) {
+		el.globalLoadingOverlay.classList.remove('is-visible');
+		el.globalLoadingOverlay.setAttribute('aria-hidden', 'true');
+	}
+	if (typeof syncRangeButtons === 'function') {
+		syncRangeButtons();
+	}
+	setStatus(String(exitMessage || 'Exit loading screen.'), 'error');
+}
+
+function beginBusyOverlay() {
+	if (!el.globalLoadingOverlay) {
+		return;
+	}
+	state.busyOverlayCount = Math.max(0, Number(state.busyOverlayCount) || 0) + 1;
+	el.globalLoadingOverlay.classList.add('is-visible');
+	el.globalLoadingOverlay.setAttribute('aria-hidden', 'false');
+}
+
+function endBusyOverlay() {
+	if (!el.globalLoadingOverlay) {
+		return;
+	}
+	state.busyOverlayCount = Math.max(0, (Number(state.busyOverlayCount) || 0) - 1);
+	if (state.busyOverlayCount > 0) {
+		return;
+	}
+	el.globalLoadingOverlay.classList.remove('is-visible');
+	el.globalLoadingOverlay.setAttribute('aria-hidden', 'true');
+}
 
 function normalizeSportKey(value) {
 	return String(value || '').trim().toLowerCase();
+}
+
+function clampText(value, maxLength = MAX_SEARCH_INPUT_LENGTH) {
+	const normalized = String(value || '');
+	if (!Number.isFinite(Number(maxLength)) || Number(maxLength) <= 0) {
+		return normalized;
+	}
+	return normalized.slice(0, Math.trunc(Number(maxLength)));
+}
+
+function normalizeApiKeyInput(value) {
+	return clampText(String(value || '').trim(), MAX_API_KEY_LENGTH);
+}
+
+function readSecureModeSetting() {
+	return true;
+}
+
+function persistSecureModeSetting(enabled) {
+	const nextValue = true;
+	state.secureMode = true;
+	try {
+		localStorage.setItem(SECURE_MODE_KEY, nextValue ? '1' : '0');
+	} catch {
+		// Ignore storage failures for secure mode preference.
+	}
+}
+
+function applySecureModeStoragePolicy() {
+	if (state.secureMode !== true) {
+		return;
+	}
+	try {
+		localStorage.removeItem(STORAGE_KEY);
+		localStorage.removeItem(LEGACY_STORAGE_KEY);
+		localStorage.removeItem(SAVED_API_KEYS_KEY);
+	} catch {
+		// Ignore storage cleanup failures.
+	}
+	if (state.apiKey) {
+		try {
+			sessionStorage.setItem(STORAGE_KEY, state.apiKey);
+		} catch {
+			// Ignore session persistence failures.
+		}
+	}
+	state.savedApiKeys = [];
+}
+
+function syncSecureModeButton() {
+	if (!el.secureModeToggleBtn) {
+		return;
+	}
+	const enabled = state.secureMode === true;
+	el.secureModeToggleBtn.classList.toggle('is-active', enabled);
+	el.secureModeToggleBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+	el.secureModeToggleBtn.innerHTML = enabled
+		? '<i class="fa-solid fa-shield-halved" aria-hidden="true"></i>Secure Mode: On'
+		: '<i class="fa-solid fa-shield-halved" aria-hidden="true"></i>Secure Mode: Off';
+}
+
+function setSecureMode(enabled) {
+	if (state.secureMode === true) {
+		syncSecureModeButton();
+		syncApiKeyModalMode();
+		persistRefreshViewState();
+		return;
+	}
+	persistSecureModeSetting(true);
+	applySecureModeStoragePolicy();
+	setStatus('Secure mode enabled. API key now uses session-only storage.', 'ok');
+	syncSavedApiKeySelect();
+	syncSecureModeButton();
+	syncApiKeyModalMode();
+	persistRefreshViewState();
+}
+
+function toggleSecureMode() {
+	setSecureMode(!(state.secureMode === true));
+}
+
+async function fetchWithTimeout(url, timeoutMs = NETWORK_TIMEOUT_MS) {
+	const controller = new AbortController();
+	const timeout = window.setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || NETWORK_TIMEOUT_MS));
+	try {
+		return await fetch(url, { signal: controller.signal });
+	} catch (error) {
+		if (error && error.name === 'AbortError') {
+			throw new Error('Request timed out.');
+		}
+		throw error;
+	} finally {
+		window.clearTimeout(timeout);
+	}
+}
+
+async function safeReadJson(response, fallbackValue = null) {
+	if (!response) {
+		return fallbackValue;
+	}
+	try {
+		return await response.json();
+	} catch {
+		return fallbackValue;
+	}
+}
+
+function parseHeaderInteger(value) {
+	const raw = String(value || '').trim();
+	if (!raw) {
+		return NaN;
+	}
+	const match = raw.match(/-?\d+/);
+	if (!match) {
+		return NaN;
+	}
+	const parsed = Number(match[0]);
+	return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function getApiCreditsUsedFromResponse(response) {
+	if (!response || !response.headers || typeof response.headers.get !== 'function') {
+		return 0;
+	}
+	const lastHeader = response.headers.get('x-requests-last');
+	const parsedLast = parseHeaderInteger(lastHeader);
+	if (Number.isFinite(parsedLast) && parsedLast >= 0) {
+		return parsedLast;
+	}
+
+	const usedHeader = response.headers.get('x-requests-used');
+	const parsedUsed = parseHeaderInteger(usedHeader);
+	if (Number.isFinite(parsedUsed) && parsedUsed >= 0 && parsedUsed <= 10) {
+		return parsedUsed;
+	}
+	return 0;
+}
+
+function getApiCreditsUsedFromResponses(responses) {
+	if (!Array.isArray(responses) || !responses.length) {
+		return 0;
+	}
+	let total = 0;
+	for (const response of responses) {
+		total += getApiCreditsUsedFromResponse(response);
+	}
+	return Math.max(0, Math.trunc(total));
 }
 
 function syncSearchInputMode() {
@@ -95,6 +391,50 @@ function syncSearchInputMode() {
 		: 'Search results by sport title or team name';
 	el.sportsSearchInput.setAttribute('aria-label', isCatalogView ? 'Search sports catalog' : 'Search results by sport title or team name');
 	el.sportsSearchInput.value = isCatalogView ? String(state.catalogSearch || '') : String(state.resultsSearch || '');
+	const panelTools = el.sportsSearchInput.closest('.panel-head-tools');
+	if (panelTools) {
+		panelTools.classList.toggle('is-collapsed', state.searchBarExpanded === false);
+	}
+	if (el.searchToggleBtn) {
+		const isCollapsed = state.searchBarExpanded === false;
+		el.searchToggleBtn.setAttribute('aria-pressed', isCollapsed ? 'false' : 'true');
+		el.searchToggleBtn.title = isCollapsed ? 'Open search bar' : 'Close search bar';
+		el.searchToggleBtn.setAttribute('aria-label', isCollapsed ? 'Open search bar' : 'Close search bar');
+	}
+	const isCollapsed = state.searchBarExpanded === false;
+	el.sportsSearchInput.disabled = isCollapsed;
+	el.sportsSearchInput.setAttribute('tabindex', isCollapsed ? '-1' : '0');
+}
+
+function syncBackButtonMode() {
+	if (!el.backBtn) {
+		return;
+	}
+	const icon = el.backBtn.querySelector('i');
+	if (!(icon instanceof HTMLElement)) {
+		return;
+	}
+
+	const isCatalogView = state.view === 'catalog';
+	if (isCatalogView) {
+		const favoritesOnly = state.catalogScope === 'favorites';
+		el.backBtn.classList.remove('hidden');
+		el.backBtn.classList.add('catalog-favorite-toggle');
+		el.backBtn.setAttribute('data-catalog-target', favoritesOnly ? 'all' : 'favorites');
+		el.backBtn.setAttribute('aria-pressed', favoritesOnly ? 'true' : 'false');
+		el.backBtn.setAttribute('aria-label', favoritesOnly ? 'Show all sports' : 'Show favourites only');
+		el.backBtn.title = favoritesOnly ? 'Show all sports' : 'Show favourites only';
+		icon.className = favoritesOnly ? 'fa-solid fa-star' : 'fa-solid fa-futbol';
+		return;
+	}
+
+	el.backBtn.classList.remove('catalog-favorite-toggle');
+	el.backBtn.removeAttribute('data-catalog-target');
+	el.backBtn.classList.remove('hidden');
+	el.backBtn.setAttribute('aria-pressed', 'false');
+	el.backBtn.setAttribute('aria-label', 'Sports catalog');
+	el.backBtn.title = 'Sports catalog';
+	icon.className = 'fa-solid fa-futbol';
 }
 
 function rerenderActiveResultsView() {
@@ -124,7 +464,8 @@ function rerenderActiveResultsView() {
 				Array.isArray(state.activeUpcomingSportData.events) ? state.activeUpcomingSportData.events : [],
 				state.activeUpcomingSportData.oddsByEventId || {},
 				state.activeUpcomingSportData.rangeKey || state.timeRange,
-				state.activeUpcomingSportData.historyMap || null
+				state.activeUpcomingSportData.historyMap || null,
+				{ showTomorrow: state.activeUpcomingSportData.showTomorrow === true }
 			);
 			return;
 		}
@@ -141,12 +482,83 @@ function maskApiKey(value) {
 	if (!key) {
 		return '';
 	}
-	if (key.length <= 8) {
+	if (key.length <= 4) {
 		return '*'.repeat(key.length);
 	}
-	const start = key.slice(0, 4);
-	const end = key.slice(-4);
-	return start + '*'.repeat(Math.max(4, key.length - 8)) + end;
+	return '*'.repeat(Math.max(0, key.length - 4)) + key.slice(-4);
+}
+
+function readSavedApiKeys() {
+	if (state.secureMode === true) {
+		return [];
+	}
+	try {
+		const raw = localStorage.getItem(SAVED_API_KEYS_KEY);
+		if (!raw) {
+			return [];
+		}
+		const parsed = JSON.parse(raw);
+		if (!Array.isArray(parsed)) {
+			return [];
+		}
+		const normalized = parsed
+			.map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+			.filter((entry) => entry && !isPlaceholderApiKey(entry));
+		return Array.from(new Set(normalized));
+	} catch {
+		return [];
+	}
+}
+
+function persistSavedApiKeys(nextKeys) {
+	if (state.secureMode === true) {
+		state.savedApiKeys = [];
+		return;
+	}
+	const normalized = Array.from(new Set((Array.isArray(nextKeys) ? nextKeys : [])
+		.map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+		.filter((entry) => entry && !isPlaceholderApiKey(entry))))
+		.slice(0, MAX_SAVED_API_KEYS);
+	state.savedApiKeys = normalized;
+	try {
+		localStorage.setItem(SAVED_API_KEYS_KEY, JSON.stringify(normalized));
+	} catch {
+		// Ignore local storage failures for non-critical saved key list.
+	}
+}
+
+function addSavedApiKey(nextKey) {
+	if (state.secureMode === true) {
+		return;
+	}
+	const normalized = normalizeApiKeyInput(nextKey);
+	if (!normalized || isPlaceholderApiKey(normalized)) {
+		return;
+	}
+	const merged = [normalized].concat(Array.isArray(state.savedApiKeys) ? state.savedApiKeys : []);
+	persistSavedApiKeys(merged);
+}
+
+function syncSavedApiKeySelect() {
+	if (!el.savedApiKeySelect) {
+		return;
+	}
+	if (state.secureMode === true) {
+		el.savedApiKeySelect.innerHTML = '<option value="">Saved keys disabled in Secure Mode</option>';
+		el.savedApiKeySelect.classList.add('hidden');
+		el.savedApiKeySelect.value = '';
+		return;
+	}
+	const keys = Array.isArray(state.savedApiKeys) ? state.savedApiKeys : [];
+	const options = ['<option value="">Choose a saved API key</option>'].concat(keys.map((key) => {
+		return '<option value="' + escapeHtml(key) + '">' + escapeHtml(maskApiKey(key)) + '</option>';
+	}));
+	el.savedApiKeySelect.innerHTML = options.join('');
+	const hasSavedKeys = keys.length > 0;
+	el.savedApiKeySelect.classList.toggle('hidden', !isLoginMode() || !hasSavedKeys);
+	if (!hasSavedKeys) {
+		el.savedApiKeySelect.value = '';
+	}
 }
 
 function syncApiKeySubmitButtonState() {
@@ -154,16 +566,89 @@ function syncApiKeySubmitButtonState() {
 		return;
 	}
 	if (!isLoginMode()) {
-		el.saveApiKeyBtn.disabled = false;
+		el.saveApiKeyBtn.disabled = true;
+		el.saveApiKeyBtn.classList.add('hidden');
 		return;
 	}
+	el.saveApiKeyBtn.classList.remove('hidden');
 	const hasInput = Boolean(el.apiKeyInput && String(el.apiKeyInput.value || '').trim());
 	el.saveApiKeyBtn.disabled = !hasInput;
+}
+
+function readGameFilters() {
+	try {
+		const raw = localStorage.getItem(GAME_FILTERS_KEY);
+		if (!raw) {
+			return {
+				positiveEv: false,
+				greenWinRate: false,
+				positiveEdge: false
+			};
+		}
+		const parsed = JSON.parse(raw);
+		return {
+			positiveEv: Boolean(parsed && parsed.positiveEv),
+			greenWinRate: Boolean(parsed && parsed.greenWinRate),
+			positiveEdge: Boolean(parsed && parsed.positiveEdge)
+		};
+	} catch {
+		return {
+			positiveEv: false,
+			greenWinRate: false,
+			positiveEdge: false
+		};
+	}
+}
+
+function persistGameFilters() {
+	try {
+		localStorage.setItem(GAME_FILTERS_KEY, JSON.stringify({
+			positiveEv: Boolean(state.gameFilters && state.gameFilters.positiveEv),
+			greenWinRate: Boolean(state.gameFilters && state.gameFilters.greenWinRate),
+			positiveEdge: Boolean(state.gameFilters && state.gameFilters.positiveEdge)
+		}));
+	} catch {
+		// Ignore storage failures for non-critical UI filters.
+	}
+}
+
+function syncGameFilterButtons() {
+	const group = el.gameFilterGroup;
+	if (!group) {
+		return;
+	}
+	const buttons = group.querySelectorAll('[data-game-filter]');
+	buttons.forEach((button) => {
+		const key = button.getAttribute('data-game-filter') || '';
+		const isActive = Boolean(state.gameFilters && state.gameFilters[key]);
+		button.classList.toggle('is-active', isActive);
+		button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+	});
+}
+
+function setGameFilterToggle(key, enabled) {
+	if (!state.gameFilters || typeof state.gameFilters !== 'object') {
+		state.gameFilters = { positiveEv: false, greenWinRate: false, positiveEdge: false };
+	}
+	if (key !== 'positiveEv' && key !== 'greenWinRate' && key !== 'positiveEdge') {
+		return;
+	}
+	state.gameFilters[key] = Boolean(enabled);
+	persistGameFilters();
+	syncGameFilterButtons();
+	rerenderActiveResultsView();
+}
+
+function hasActiveGameFilters() {
+	return Boolean(state.gameFilters && (state.gameFilters.positiveEv || state.gameFilters.greenWinRate || state.gameFilters.positiveEdge));
 }
 
 function syncApiKeyModalMode() {
 	const loginMode = isLoginMode();
 	document.body.classList.toggle('auth-locked', loginMode);
+	if (el.authStatusBtn) {
+		el.authStatusBtn.classList.toggle('hidden', loginMode);
+	}
 	if (el.apiKeyModal) {
 		el.apiKeyModal.classList.toggle('fullscreen-login', loginMode);
 	}
@@ -174,19 +659,26 @@ function syncApiKeyModalMode() {
 	if (el.apiKeyLabel) {
 		el.apiKeyLabel.textContent = loginMode ? 'Please enter your API key..' : 'Odds API key';
 	}
+	syncSavedApiKeySelect();
 	if (el.saveApiKeyBtn) {
-		el.saveApiKeyBtn.textContent = loginMode ? 'Continue' : 'Save';
+		el.saveApiKeyBtn.innerHTML = loginMode
+			? '<i class="fa-solid fa-arrow-right" aria-hidden="true"></i>Continue'
+			: '<i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>Save';
+		el.saveApiKeyBtn.classList.toggle('hidden', !loginMode);
+		el.saveApiKeyBtn.disabled = !loginMode;
 	}
 	if (el.apiKeyInput) {
 		el.apiKeyInput.classList.toggle('hidden', false);
+		el.apiKeyInput.type = loginMode ? 'password' : 'text';
+		el.apiKeyInput.value = loginMode ? '' : maskApiKey(state.apiKey);
 		el.apiKeyInput.disabled = !loginMode;
+		el.apiKeyInput.readOnly = !loginMode;
 	}
 	if (el.swapApiKeyBtn) {
 		el.swapApiKeyBtn.classList.toggle('hidden', loginMode);
-	}
-	if (el.apiKeyMasked) {
-		el.apiKeyMasked.classList.toggle('hidden', true);
-		el.apiKeyMasked.textContent = maskApiKey(state.apiKey);
+		el.swapApiKeyBtn.innerHTML = '<i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>';
+		el.swapApiKeyBtn.title = 'Sign out';
+		el.swapApiKeyBtn.setAttribute('aria-label', 'Sign out');
 	}
 	if (el.modalCloseBtn) {
 		el.modalCloseBtn.classList.toggle('hidden', loginMode);
@@ -200,7 +692,44 @@ function syncApiKeyModalMode() {
 	if (el.settingsPanel) {
 		el.settingsPanel.classList.toggle('hidden', loginMode);
 	}
+	if (el.secureModeToggleBtn) {
+		el.secureModeToggleBtn.classList.toggle('hidden', loginMode);
+	}
+	syncSecureModeButton();
 	syncApiKeySubmitButtonState();
+}
+
+function syncSettingsModalPageShiftState() {
+	if (!el.apiKeyModal) {
+		document.body.style.setProperty('--page-shift-x', '0px');
+		return;
+	}
+	if (isLoginMode()) {
+		el.apiKeyModal.style.display = 'flex';
+		document.body.style.setProperty('--page-shift-x', '0px');
+		return;
+	}
+	const modalIsOpen = el.apiKeyModal.classList.contains('is-open');
+	const modalIsClosing = el.apiKeyModal.classList.contains('is-closing');
+	const shouldKeepModalShiftState = modalIsOpen || modalIsClosing;
+	if (!shouldKeepModalShiftState) {
+		el.apiKeyModal.style.display = 'none';
+		document.body.style.setProperty('--page-shift-x', '0px');
+		return;
+	}
+	if (modalIsClosing) {
+		el.apiKeyModal.style.display = 'flex';
+		document.body.style.setProperty('--page-shift-x', '0px');
+		return;
+	}
+	el.apiKeyModal.style.display = 'flex';
+	const modalCard = el.apiKeyModal.querySelector('.modal-card');
+	const cardWidth = modalCard instanceof HTMLElement ? modalCard.getBoundingClientRect().width : 0;
+	const viewportWidth = window.innerWidth || 0;
+	const preferredShift = Math.max(180, Math.min(cardWidth * 0.68, 260));
+	const maxAllowedShift = Math.max(0, viewportWidth - 560);
+	const shiftPx = Math.max(0, Math.min(preferredShift, maxAllowedShift));
+	document.body.style.setProperty('--page-shift-x', '-' + shiftPx.toFixed(0) + 'px');
 }
 
 function normalizeSportFilterValue(value) {
@@ -221,6 +750,46 @@ function getSportDisplayTitle(row) {
 	return String(row.key || '').trim();
 }
 
+function getSportKeyByTitle(title) {
+	const needle = String(title || '').trim().toLowerCase();
+	if (!needle) {
+		return '';
+	}
+	for (const row of Array.isArray(state.sportsRows) ? state.sportsRows : []) {
+		const rowTitle = getSportDisplayTitle(row).toLowerCase();
+		if (rowTitle !== needle) {
+			continue;
+		}
+		return row && row.key ? String(row.key).trim() : '';
+	}
+	return '';
+}
+
+function getActiveSportTitle() {
+	const activeKey = String(state.activeSportKey || '').trim();
+	if (!activeKey) {
+		return '';
+	}
+	const activeRow = state.sportsByKey && state.sportsByKey[activeKey] ? state.sportsByKey[activeKey] : null;
+	const fromRow = getSportDisplayTitle(activeRow);
+	if (fromRow) {
+		return fromRow;
+	}
+	if (Array.isArray(state.allUpcomingGames) && state.allUpcomingGames.length) {
+		const hit = state.allUpcomingGames.find((item) => String(item && item.sportKey ? item.sportKey : '').trim() === activeKey);
+		if (hit && hit.sportTitle) {
+			return String(hit.sportTitle).trim();
+		}
+	}
+	if (Array.isArray(state.allRecentResultsItems) && state.allRecentResultsItems.length) {
+		const hit = state.allRecentResultsItems.find((item) => String(item && item.sportKey ? item.sportKey : '').trim() === activeKey);
+		if (hit && hit.sportTitle) {
+			return String(hit.sportTitle).trim();
+		}
+	}
+	return activeKey;
+}
+
 function syncResultSportFilterBar() {
 	if (!el.sportFilterBar || !el.sportFilterButtons) {
 		return;
@@ -235,18 +804,21 @@ function syncResultSportFilterBar() {
 	}
 
 	el.sportFilterBar.classList.remove('hidden');
-	const allButton = '<button class="control-btn sport-filter-btn ' + (state.resultSportFilter === 'all' ? 'is-active' : '') + '" type="button" data-result-sport="all" aria-pressed="' + (state.resultSportFilter === 'all' ? 'true' : 'false') + '">All Sports</button>';
+	const allButton = '<button class="control-btn sport-filter-btn ' + (state.resultSportFilter === 'all' ? 'is-active' : '') + '" type="button" data-result-sport="all" aria-pressed="' + (state.resultSportFilter === 'all' ? 'true' : 'false') + '"><i class="fa-solid fa-globe" aria-hidden="true"></i>All Sports</button>';
 	const sportButtons = state.resultSportOptions.map((sportTitle) => {
 		const isActive = state.resultSportFilter === sportTitle;
-		return '<button class="control-btn sport-filter-btn ' + (isActive ? 'is-active' : '') + '" type="button" data-result-sport="' + escapeHtml(sportTitle) + '" aria-pressed="' + (isActive ? 'true' : 'false') + '">' + escapeHtml(sportTitle) + '</button>';
+		return '<button class="control-btn sport-filter-btn ' + (isActive ? 'is-active' : '') + '" type="button" data-result-sport="' + escapeHtml(sportTitle) + '" aria-pressed="' + (isActive ? 'true' : 'false') + '"><i class="fa-solid fa-tag" aria-hidden="true"></i>' + escapeHtml(sportTitle) + '</button>';
 	}).join('');
 	el.sportFilterButtons.innerHTML = allButton + sportButtons;
 }
 
+function getCatalogScopeLabel(scopeKey = state.catalogScope) {
+	return scopeKey === 'favorites' ? 'Favourites' : 'All Sports';
+}
+
 function syncResultsSportScopeDropdown() {
 	if (el.resultsSportScopeLabel) {
-		const labelScope = state.catalogScope === 'favorites' ? 'Favourites' : 'All Sports';
-		el.resultsSportScopeLabel.textContent = 'Results sport scope (' + labelScope + ')';
+		el.resultsSportScopeLabel.textContent = 'Results sport scope (' + getCatalogScopeLabel() + ')';
 	}
 
 	if (!el.resultsSportScopeSelect) {
@@ -254,30 +826,27 @@ function syncResultsSportScopeDropdown() {
 	}
 
 	const select = el.resultsSportScopeSelect;
-	const favoriteKeys = new Set((Array.isArray(state.savedSports) ? state.savedSports : []).map((key) => normalizeSportKey(key)));
-	const availableTitles = [];
-	const seen = new Set();
-
-	for (const row of Array.isArray(state.sportsRows) ? state.sportsRows : []) {
-		const title = getSportDisplayTitle(row);
-		const key = row && row.key ? String(row.key).trim() : '';
-		const normalizedKey = normalizeSportKey(key || title);
-		if (!title || seen.has(title)) {
-			continue;
-		}
-		seen.add(title);
-
-		if (state.catalogScope === 'favorites') {
-			if (favoriteKeys.has(normalizedKey)) {
-				availableTitles.push(title);
+	const optionTitles = Array.isArray(state.resultSportOptions) ? state.resultSportOptions : [];
+	const fallbackTitles = [];
+	if (!optionTitles.length) {
+		const favoriteKeys = new Set((Array.isArray(state.savedSports) ? state.savedSports : []).map((key) => normalizeSportKey(key)));
+		const seen = new Set();
+		for (const row of Array.isArray(state.sportsRows) ? state.sportsRows : []) {
+			const title = getSportDisplayTitle(row);
+			const key = row && row.key ? String(row.key).trim() : '';
+			const normalizedKey = normalizeSportKey(key || title);
+			if (!title || seen.has(title)) {
+				continue;
 			}
-			continue;
+			seen.add(title);
+			if (state.catalogScope === 'favorites' && !favoriteKeys.has(normalizedKey)) {
+				continue;
+			}
+			fallbackTitles.push(title);
 		}
-
-		availableTitles.push(title);
 	}
 
-	const sortedTitles = availableTitles.slice().sort((a, b) => a.localeCompare(b));
+	const sortedTitles = (optionTitles.length ? optionTitles.slice() : fallbackTitles.slice()).sort((a, b) => a.localeCompare(b));
 	select.innerHTML = '';
 
 	const allOption = document.createElement('option');
@@ -290,7 +859,7 @@ function syncResultsSportScopeDropdown() {
 
 	if (sortedTitles.length) {
 		const group = document.createElement('optgroup');
-		group.label = state.catalogScope === 'favorites' ? 'Favourites' : 'All Sports';
+		group.label = getCatalogScopeLabel();
 		for (const title of sortedTitles) {
 			const option = document.createElement('option');
 			option.value = title;
@@ -301,6 +870,19 @@ function syncResultsSportScopeDropdown() {
 			group.appendChild(option);
 		}
 		select.appendChild(group);
+	}
+	select.disabled = false;
+	const activeSportTitle = getActiveSportTitle();
+	if (activeSportTitle && !Array.from(select.options).some((option) => option.value === activeSportTitle)) {
+		const dynamicOption = document.createElement('option');
+		dynamicOption.value = activeSportTitle;
+		dynamicOption.textContent = activeSportTitle;
+		select.appendChild(dynamicOption);
+	}
+
+	if (activeSportTitle) {
+		select.value = activeSportTitle;
+		return;
 	}
 
 	if (state.resultSportFilter !== 'all' && !Array.from(select.options).some((option) => option.value === state.resultSportFilter)) {
@@ -326,6 +908,10 @@ function setResultSportOptions(sportTitles) {
 		deduped.push(normalized);
 	}
 	state.resultSportOptions = deduped;
+	if (state.pendingResultSportFilter && state.resultSportOptions.includes(state.pendingResultSportFilter)) {
+		state.resultSportFilter = state.pendingResultSportFilter;
+		state.pendingResultSportFilter = '';
+	}
 	if (state.resultSportFilter !== 'all' && !state.resultSportOptions.includes(state.resultSportFilter)) {
 		state.resultSportFilter = 'all';
 	}
@@ -335,9 +921,69 @@ function setResultSportOptions(sportTitles) {
 
 function setResultSportFilter(value) {
 	const next = normalizeSportFilterValue(value);
-	if (next !== 'all' && !state.resultSportOptions.includes(next)) {
+	const isDetailView = state.view === 'upcoming' || state.view === 'recent';
+	const hasActiveSport = Boolean(String(state.activeSportKey || '').trim());
+	const nextSportKey = next === 'all' ? '' : getSportKeyByTitle(next);
+
+	if (next !== 'all' && nextSportKey && (hasActiveSport || !state.resultSportOptions.includes(next))) {
+		state.pendingResultSportFilter = '';
+		state.resultSportFilter = 'all';
+		state.activeSportKey = nextSportKey;
+		syncResultSportFilterBar();
+		syncResultsSportScopeDropdown();
+		if (isDetailView) {
+			if (state.view === 'recent') {
+				loadRecentResultsForSport(nextSportKey, state.apiKey);
+			} else {
+				loadUpcomingForSport(nextSportKey, state.apiKey);
+			}
+		}
+		persistRefreshViewState();
 		return;
 	}
+
+	if (String(state.activeSportKey || '').trim()) {
+		if (next === 'all') {
+			state.pendingResultSportFilter = '';
+			state.resultSportFilter = 'all';
+			state.activeSportKey = '';
+			syncResultSportFilterBar();
+			syncResultsSportScopeDropdown();
+			if (state.view === 'recent') {
+				loadRecentResultsForSelectedScope(state.apiKey);
+			} else {
+				loadAllSportsUpcoming(state.apiKey);
+			}
+			persistRefreshViewState();
+			return;
+		}
+		const nextSportKey = getSportKeyByTitle(next);
+		if (!nextSportKey) {
+			state.pendingResultSportFilter = next;
+			syncResultsSportScopeDropdown();
+			persistRefreshViewState();
+			return;
+		}
+		state.pendingResultSportFilter = '';
+		state.resultSportFilter = 'all';
+		state.activeSportKey = nextSportKey;
+		syncResultSportFilterBar();
+		syncResultsSportScopeDropdown();
+		if (state.view === 'recent') {
+			loadRecentResultsForSport(nextSportKey, state.apiKey);
+		} else {
+			loadUpcomingForSport(nextSportKey, state.apiKey);
+		}
+		persistRefreshViewState();
+		return;
+	}
+	if (next !== 'all' && !state.resultSportOptions.includes(next)) {
+		state.pendingResultSportFilter = next;
+		syncResultsSportScopeDropdown();
+		persistRefreshViewState();
+		return;
+	}
+	state.pendingResultSportFilter = '';
 	state.resultSportFilter = next;
 	syncResultSportFilterBar();
 	syncResultsSportScopeDropdown();
@@ -349,6 +995,7 @@ function setResultSportFilter(value) {
 	if (state.view === 'recent' && !state.activeSportKey) {
 		renderRecentResultsForSelectedScope(state.recentScopeLabel || 'All Sports', state.allRecentResultsItems);
 	}
+	persistRefreshViewState();
 }
 
 function loadSavedSports() {
@@ -413,16 +1060,24 @@ function getCacheKey(name) {
 
 function writeCache(name, data) {
 	try {
+		const timestamp = Date.now();
 		localStorage.setItem(getCacheKey(name), JSON.stringify({
-			ts: Date.now(),
+			ts: timestamp,
 			data
 		}));
+		return timestamp;
 	} catch {
 		// Ignore storage cache failures.
+		return Date.now();
 	}
 }
 
 function readCache(name) {
+	const entry = readCacheEntry(name);
+	return entry ? entry.data : null;
+}
+
+function readCacheEntry(name) {
 	try {
 		const raw = localStorage.getItem(getCacheKey(name));
 		if (!raw) {
@@ -438,10 +1093,15 @@ function readCache(name) {
 		if ((Date.now() - parsed.ts) > CACHE_TTL_MS) {
 			return null;
 		}
-		return parsed.data;
+		return parsed;
 	} catch {
 		return null;
 	}
+}
+
+function readCacheTimestamp(name) {
+	const entry = readCacheEntry(name);
+	return entry && Number.isFinite(Number(entry.ts)) ? Number(entry.ts) : NaN;
 }
 
 function clearRollingHistoryCache(sportKey = "") {
@@ -494,6 +1154,44 @@ function buildOddsByEventId(oddsRows) {
 		}
 	}
 	return oddsByEventId;
+}
+
+function getEventStartTimestamp(eventRow) {
+	if (!eventRow || typeof eventRow !== 'object') {
+		return NaN;
+	}
+	const raw = eventRow.commence_time || eventRow.start || eventRow.start_time || '';
+	if (!raw) {
+		return NaN;
+	}
+	const ts = new Date(String(raw)).getTime();
+	return Number.isFinite(ts) ? ts : NaN;
+}
+
+function getNextGameStartTimestamp(eventRows) {
+	if (!Array.isArray(eventRows) || !eventRows.length) {
+		return NaN;
+	}
+	const now = Date.now();
+	let nextTs = NaN;
+	for (const row of eventRows) {
+		const ts = getEventStartTimestamp(row);
+		if (!Number.isFinite(ts) || ts <= now) {
+			continue;
+		}
+		if (!Number.isFinite(nextTs) || ts < nextTs) {
+			nextTs = ts;
+		}
+	}
+	return nextTs;
+}
+
+function shouldRefreshCachedEvents(eventRows) {
+	const nextStartTs = getNextGameStartTimestamp(eventRows);
+	if (!Number.isFinite(nextStartTs)) {
+		return false;
+	}
+	return Date.now() >= (nextStartTs - REFRESH_BEFORE_NEXT_GAME_MS);
 }
 
 function persistSavedSports() {
@@ -576,7 +1274,19 @@ function toggleSavedSport(sportKey) {
 		sportKey: normalizedKey,
 		type: flashType
 	};
-	renderSportsTable(state.sportsRows);
+	// Update only the affected row's star button to avoid a full re-render losing saved state.
+	const affectedStar = el.tableWrap
+		? el.tableWrap.querySelector('.star-btn[data-star-key="' + normalizedKey + '"]')
+		: null;
+	if (affectedStar instanceof HTMLElement) {
+		affectedStar.classList.toggle('active', flashType === 'saved');
+		affectedStar.classList.toggle('remove-btn', flashType === 'saved');
+		if (state.catalogScope === 'favorites') {
+			renderSportsTable(state.sportsRows);
+		}
+	} else {
+		renderSportsTable(state.sportsRows);
+	}
 	if (state.favoriteFlashTimerId) {
 		clearTimeout(state.favoriteFlashTimerId);
 	}
@@ -591,8 +1301,22 @@ function toggleSavedSport(sportKey) {
 }
 
 function syncRangeButtons() {
+	const rangeIconByKey = {
+		pastWeek: 'fa-clock-rotate-left',
+		live: 'fa-satellite-dish',
+		today: 'fa-calendar-day'
+	};
+	const rangeLabelByKey = {
+		pastWeek: 'Results',
+		live: 'Live',
+		today: 'Upcoming'
+	};
 	const buttons = document.querySelectorAll('.range-btn');
 	buttons.forEach((button) => {
+		const rangeKey = button.getAttribute('data-range') || 'today';
+		const iconClass = rangeIconByKey[rangeKey] || 'fa-sliders';
+		const label = rangeLabelByKey[rangeKey] || String(rangeKey || 'Range');
+		button.innerHTML = '<i class="fa-solid ' + iconClass + '" aria-hidden="true"></i>' + escapeHtml(label);
 		const isActive = state.rangeButtonsEnabled && state.timeRangeSelected && button.getAttribute('data-range') === state.timeRange;
 		button.classList.toggle('is-active', isActive);
 		button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
@@ -610,9 +1334,26 @@ function getPredictionWinRateValue(prediction) {
 
 function matchesWinRateFilter(prediction) {
 	if (!prediction || !prediction.predictedTeam) {
-		return true;
+		return !hasActiveGameFilters();
 	}
 	const value = getPredictionWinRateValue(prediction);
+	if (state.gameFilters && state.gameFilters.greenWinRate) {
+		if (!Number.isFinite(value) || value < 65) {
+			return false;
+		}
+	}
+	if (state.gameFilters && state.gameFilters.positiveEdge) {
+		const edgeValue = Number(prediction && prediction.edgePct);
+		if (!Number.isFinite(edgeValue) || edgeValue <= 0) {
+			return false;
+		}
+	}
+	if (state.gameFilters && state.gameFilters.positiveEv) {
+		const evValue = Number(prediction && prediction.evPct);
+		if (!Number.isFinite(evValue) || evValue <= 0) {
+			return false;
+		}
+	}
 	if (!Number.isFinite(value)) {
 		return true;
 	}
@@ -642,15 +1383,18 @@ function syncCatalogScopeButtons() {
 	buttons.forEach((button) => {
 		const scopeKey = button.getAttribute('data-scope') || 'all';
 		if (scopeKey === 'favorites') {
-			button.textContent = 'Favourites (' + favouriteLoadedCount + ')';
+			button.innerHTML = '<i class="fa-solid fa-star" aria-hidden="true"></i>Favourites (' + favouriteLoadedCount + ')';
 		} else {
-			button.textContent = 'All Sports (' + allSportsCount + ')';
+			button.innerHTML = '<i class="fa-solid fa-globe" aria-hidden="true"></i>All Sports (' + allSportsCount + ')';
 		}
 
 		const isActive = button.getAttribute('data-scope') === state.catalogScope;
 		button.classList.toggle('is-active', isActive);
 		button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
 	});
+
+	// Sync the panel-head scope toggle pill.
+	syncBackButtonMode();
 }
 
 function getLoadedSportsCount() {
@@ -713,9 +1457,11 @@ function setCatalogScope(scopeKey) {
 	setView('catalog');
 	if (state.apiKey) {
 		loadSportsCatalog(state.apiKey);
+		persistRefreshViewState();
 		return;
 	}
 	setStatus('Sports loaded: ' + (scopeKey === 'favorites' ? getLoadedSportsCount() : 0), 'ok');
+	persistRefreshViewState();
 }
 
 function setView(viewName) {
@@ -726,13 +1472,13 @@ function setView(viewName) {
 	}
 	const isDetailView = state.view !== "catalog";
 	if (state.view === "upcoming") {
-		el.pageTitle.textContent = state.timeRange === "live" ? "Live Games" : "Upcoming Games";
+		el.pageTitle.textContent = getGamesSectionTitle(state.timeRange);
 	} else if (state.view === "recent") {
 		el.pageTitle.textContent = "Recent Results";
 	} else {
-		el.pageTitle.textContent = "Sports Catalog";
+		el.pageTitle.textContent = state.catalogScope === 'favorites' ? 'Favourites Catalog' : 'Sports Catalog';
 	}
-	el.backBtn.classList.toggle("hidden", !isDetailView);
+	syncBackButtonMode();
 	el.tableWrap.classList.toggle("hidden", isDetailView);
 	el.upcomingWrap.classList.toggle("hidden", !isDetailView);
 	state.rangeButtonsEnabled = true;
@@ -745,19 +1491,48 @@ function setView(viewName) {
 	syncRangeButtons();
 	syncResultSportFilterBar();
 	syncSearchInputMode();
+	persistRefreshViewState();
 }
 
 function setStatus(text, mode) {
 	if (!el.status) {
 		return;
 	}
-	el.status.textContent = text;
+	if (state.statusHideTimerId) {
+		window.clearTimeout(state.statusHideTimerId);
+		state.statusHideTimerId = null;
+	}
+	const nextText = String(text || '').trim();
+	if (!nextText) {
+		el.status.textContent = '';
+		el.status.className = 'status';
+		el.status.classList.remove('is-visible');
+		return;
+	}
+
+	el.status.textContent = nextText;
 	el.status.className = "status";
 	if (mode === "ok") {
 		el.status.classList.add("ok");
 	}
 	if (mode === "error") {
 		el.status.classList.add("error");
+	}
+	if (mode !== "ok" && mode !== "error") {
+		el.status.classList.add('loading');
+	}
+	el.status.classList.add('is-visible');
+	state.statusHideTimerId = window.setTimeout(() => {
+		el.status.classList.remove('is-visible');
+	}, 6000);
+}
+
+// Updates the text label inside an active .loading-panel inside upcomingWrap.
+function setLoadingMessage(text) {
+	if (!el.upcomingWrap) return;
+	const label = el.upcomingWrap.querySelector('.loading-label');
+	if (label instanceof HTMLElement) {
+		label.textContent = String(text || '').trim();
 	}
 }
 
@@ -773,6 +1548,107 @@ function normalizeRangeKey(rangeKey) {
 		return "live";
 	}
 	return "today";
+}
+
+function persistRefreshViewState() {
+	const allowedSortFields = new Set(['key', 'title', 'group', 'active', 'outrights']);
+	const sortField = state.catalogSort && allowedSortFields.has(state.catalogSort.field)
+		? state.catalogSort.field
+		: 'title';
+	const sortDirection = state.catalogSort && state.catalogSort.direction === 'desc' ? 'desc' : 'asc';
+	const snapshot = {
+		view: state.view === 'upcoming' || state.view === 'recent' ? state.view : 'catalog',
+		catalogScope: state.catalogScope === 'favorites' ? 'favorites' : 'all',
+		activeSportKey: String(state.activeSportKey || '').trim(),
+		timeRange: normalizeRangeKey(state.timeRange),
+		timeRangeSelected: Boolean(state.timeRangeSelected),
+		rangeButtonsEnabled: Boolean(state.rangeButtonsEnabled),
+		resultSportFilter: state.resultSportFilter === 'all' ? 'all' : String(state.resultSportFilter || '').trim(),
+		catalogSearch: String(state.catalogSearch || ''),
+		resultsSearch: String(state.resultsSearch || ''),
+		searchBarExpanded: Boolean(state.searchBarExpanded),
+		secureMode: state.secureMode === true,
+		recentResultsLookbackDays: Number.isFinite(Number(state.recentResultsLookbackDays))
+			? Math.max(2, Math.min(14, Math.round(Number(state.recentResultsLookbackDays))))
+			: 2,
+		upcomingSavedSportsShowTomorrow: state.upcomingSavedSportsShowTomorrow === true,
+		exampleStake: Number.isFinite(Number(state.exampleStake)) && Number(state.exampleStake) >= 0
+			? Number(state.exampleStake)
+			: 100,
+		catalogSort: {
+			field: sortField,
+			direction: sortDirection
+		}
+	};
+	try {
+		localStorage.setItem(REFRESH_VIEW_STATE_KEY, JSON.stringify(snapshot));
+	} catch {
+		// Ignore local storage failures for refresh-state persistence.
+	}
+}
+
+function readRefreshViewState() {
+	try {
+		const raw = localStorage.getItem(REFRESH_VIEW_STATE_KEY);
+		if (!raw) {
+			return null;
+		}
+		const parsed = JSON.parse(raw);
+		return parsed && typeof parsed === 'object' ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
+function applyRefreshViewState(snapshot) {
+	if (!snapshot || typeof snapshot !== 'object') {
+		return false;
+	}
+
+	state.view = snapshot.view === 'upcoming' || snapshot.view === 'recent' ? snapshot.view : 'catalog';
+	state.catalogScope = snapshot.catalogScope === 'favorites' ? 'favorites' : 'all';
+	state.activeSportKey = String(snapshot.activeSportKey || '').trim();
+	state.timeRange = normalizeRangeKey(snapshot.timeRange || state.timeRange);
+	state.timeRangeSelected = snapshot.timeRangeSelected !== false;
+	state.rangeButtonsEnabled = snapshot.rangeButtonsEnabled !== false;
+	state.catalogSearch = String(snapshot.catalogSearch || '').trim();
+	state.resultsSearch = String(snapshot.resultsSearch || '').trim();
+	state.searchBarExpanded = snapshot.searchBarExpanded === true;
+	state.secureMode = true;
+	state.upcomingSavedSportsShowTomorrow = snapshot.upcomingSavedSportsShowTomorrow === true;
+	state.recentResultsLookbackDays = Number.isFinite(Number(snapshot.recentResultsLookbackDays))
+		? Math.max(2, Math.min(14, Math.round(Number(snapshot.recentResultsLookbackDays))))
+		: state.recentResultsLookbackDays;
+	state.exampleStake = Number.isFinite(Number(snapshot.exampleStake)) && Number(snapshot.exampleStake) >= 0
+		? Number(snapshot.exampleStake)
+		: state.exampleStake;
+
+	const allowedSortFields = new Set(['key', 'title', 'group', 'active', 'outrights']);
+	if (snapshot.catalogSort && typeof snapshot.catalogSort === 'object') {
+		state.catalogSort = {
+			field: allowedSortFields.has(snapshot.catalogSort.field) ? snapshot.catalogSort.field : state.catalogSort.field,
+			direction: snapshot.catalogSort.direction === 'desc' ? 'desc' : 'asc'
+		};
+	}
+
+	const nextFilter = normalizeSportFilterValue(snapshot.resultSportFilter || 'all');
+	if (nextFilter === 'all') {
+		state.resultSportFilter = 'all';
+		state.pendingResultSportFilter = '';
+	} else {
+		state.resultSportFilter = 'all';
+		state.pendingResultSportFilter = nextFilter;
+	}
+
+	return true;
+}
+
+function clearRefreshViewState() {
+	try {
+		localStorage.removeItem(REFRESH_VIEW_STATE_KEY);
+	} catch {
+		// Ignore storage failures while clearing refresh snapshot.
+	}
 }
 
 function getSavedRangeSelection() {
@@ -796,6 +1672,7 @@ function saveRangeSelection(rangeKey) {
 	} catch {
 		// Ignore local storage failures.
 	}
+	persistRefreshViewState();
 }
 
 function getLastLoadedTimestamp() {
@@ -823,13 +1700,15 @@ function setLastLoadedTimestamp(dateValue = new Date()) {
 		// Ignore local storage failures.
 	}
 	const friendlyStamp = value.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+	const resultCount = Math.max(0, Math.trunc(Number(state.lastLoadCreditCost) || 0));
 	if (el.panelSub) {
-		el.panelSub.textContent = 'Loaded: ' + friendlyStamp;
+		el.panelSub.textContent = 'LOADED (' + resultCount + '): ' + friendlyStamp;
 	}
 }
 
-function markDataLoaded() {
-	setLastLoadedTimestamp(new Date());
+function markDataLoaded(creditCost = state.lastLoadCreditCost, loadedAt = Date.now()) {
+	state.lastLoadCreditCost = Math.max(0, Math.trunc(Number(creditCost) || 0));
+	setLastLoadedTimestamp(loadedAt);
 }
 
 function renderRangeFromPreloadedSnapshot(rangeKey) {
@@ -843,7 +1722,7 @@ function renderRangeFromPreloadedSnapshot(rangeKey) {
 		renderRecentResultsForSelectedScope(state.recentScopeLabel, state.allRecentResultsItems);
 		return true;
 	}
-	state.allUpcomingGames = Array.isArray(snapshot.games) ? snapshot.games.slice() : [];
+	state.activeSportKey = state.view === 'catalog' ? '' : String(snapshot.activeSportKey || '').trim();
 	state.upcomingVisibleSportCount = Number.isFinite(snapshot.visibleCount) ? snapshot.visibleCount : 5;
 	setResultSportOptions(Array.isArray(snapshot.sportOptions) ? snapshot.sportOptions : []);
 	renderUpcomingSportBatch();
@@ -861,6 +1740,20 @@ function getRangeLabel(rangeKey) {
 	return "Upcoming";
 }
 
+function getGamesSectionTitle(rangeKey = state.timeRange) {
+	return normalizeRangeKey(rangeKey) === 'live' ? 'Live Games' : 'Upcoming Games';
+}
+
+function getGamesLoadingLabel(rangeKey = state.timeRange) {
+	return normalizeRangeKey(rangeKey) === 'live' ? 'Loading live games' : 'Loading upcoming games';
+}
+
+function getLoadingStampLabel(creditCost = 0) {
+	const cost = Math.max(0, Math.trunc(Number(creditCost) || 0));
+	const timestamp = new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+	return 'LOADED (' + cost + '): ' + timestamp;
+}
+
 function getStartOfTodayDate() {
 	const now = new Date();
 	return new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -873,7 +1766,7 @@ function getRangeWindow(rangeKey) {
 	const startOfTomorrow = new Date(startOfToday.getTime() + (24 * 60 * 60 * 1000));
 	const endOfToday = new Date(startOfTomorrow.getTime() - 1);
 	const now = new Date();
-	const startOfPastWindow = new Date(startOfYesterday.getTime());
+	const startOfPastWindow = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000));
 	const endOfPastWindow = new Date(now.getTime());
 
 	if (normalizedRange === "pastWeek") {
@@ -955,16 +1848,42 @@ function isPlaceholderApiKey(value) {
 	return blockedPatterns.includes(normalized) || normalized.includes('demo_') || normalized.includes('placeholder') || normalized.includes('example');
 }
 
-function requireLoginOrRedirect() {
-	const candidates = [];
+function hasCachedDataForRefreshBootstrap() {
+	const sportsCatalog = readCache('sports_catalog');
+	if (Array.isArray(sportsCatalog) && sportsCatalog.length > 0) {
+		return true;
+	}
 	try {
-		const value = localStorage.getItem(STORAGE_KEY) || '';
-		candidates.push(value);
-		if (isPlaceholderApiKey(value)) {
-			localStorage.removeItem(STORAGE_KEY);
+		const cachePrefix = 'keieye_cache_' + CACHE_VERSION + '_';
+		for (let i = 0; i < localStorage.length; i += 1) {
+			const key = localStorage.key(i);
+			if (!key || !key.startsWith(cachePrefix)) {
+				continue;
+			}
+			const cacheName = key.slice(cachePrefix.length);
+			if (cacheName.startsWith('upcoming_events_') || cacheName.startsWith('recent_scores_')) {
+				return true;
+			}
 		}
 	} catch {
-		candidates.push('');
+		return false;
+	}
+	return false;
+}
+
+function requireLoginOrRedirect() {
+	state.savedApiKeys = readSavedApiKeys();
+	const candidates = [];
+	if (state.secureMode !== true) {
+		try {
+			const value = localStorage.getItem(STORAGE_KEY) || '';
+			candidates.push(value);
+			if (isPlaceholderApiKey(value)) {
+				localStorage.removeItem(STORAGE_KEY);
+			}
+		} catch {
+			candidates.push('');
+		}
 	}
 	try {
 		const value = sessionStorage.getItem(STORAGE_KEY) || '';
@@ -976,29 +1895,40 @@ function requireLoginOrRedirect() {
 		candidates.push('');
 	}
 
-	let legacyApiKey = '';
-	try {
-		const rawLegacy = localStorage.getItem(LEGACY_STORAGE_KEY);
-		if (rawLegacy) {
-			const parsed = JSON.parse(rawLegacy);
-			if (parsed && typeof parsed.oddsApiKey === 'string') {
-				legacyApiKey = parsed.oddsApiKey;
+	if (state.secureMode !== true) {
+		let legacyApiKey = '';
+		try {
+			const rawLegacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+			if (rawLegacy) {
+				const parsed = JSON.parse(rawLegacy);
+				if (parsed && typeof parsed.oddsApiKey === 'string') {
+					legacyApiKey = parsed.oddsApiKey;
+				}
 			}
-		}
-		if (isPlaceholderApiKey(legacyApiKey)) {
-			localStorage.removeItem(LEGACY_STORAGE_KEY);
+			if (isPlaceholderApiKey(legacyApiKey)) {
+				localStorage.removeItem(LEGACY_STORAGE_KEY);
+				legacyApiKey = '';
+			}
+		} catch {
 			legacyApiKey = '';
 		}
-	} catch {
-		legacyApiKey = '';
+		candidates.push(legacyApiKey);
 	}
-	candidates.push(legacyApiKey);
 
 	const apiKey = candidates
 		.map((value) => (typeof value === 'string' ? value.trim() : ''))
 		.filter((value) => value.length > 0 && !isPlaceholderApiKey(value))
 		[0] || '';
+	if (apiKey.trim()) {
+		addSavedApiKey(apiKey);
+	}
 	if (!apiKey.trim()) {
+		if (hasCachedDataForRefreshBootstrap()) {
+			if (typeof setStatus === 'function') {
+				setStatus('No API key found. Showing cached data from storage.', 'ok');
+			}
+			return '';
+		}
 		if (typeof openApiKeyModal === 'function') {
 			openApiKeyModal();
 		}
@@ -1012,12 +1942,20 @@ function requireLoginOrRedirect() {
 
 function openApiKeyModal() {
 	closePredictionInfoModal();
+	state.apiKeyLogoutConfirmArmed = false;
+	if (state.settingsModalCloseTimerId) {
+		window.clearTimeout(state.settingsModalCloseTimerId);
+		state.settingsModalCloseTimerId = null;
+	}
 	syncApiKeyModalMode();
-	if (el.apiKeyInput) {
-		el.apiKeyInput.value = isLoginMode() ? "" : state.apiKey || "";
+	if (el.apiKeyInput && isLoginMode()) {
+		el.apiKeyInput.value = "";
 	}
 	syncApiKeySubmitButtonState();
+	el.apiKeyModal.style.display = 'flex';
+	el.apiKeyModal.classList.remove('is-closing');
 	el.apiKeyModal.classList.add("is-open");
+	syncSettingsModalPageShiftState();
 	if (isLoginMode() && el.apiKeyInput) {
 		window.setTimeout(() => el.apiKeyInput.focus(), 40);
 	}
@@ -1039,16 +1977,65 @@ function closePredictionInfoModal() {
 	el.predictionInfoModal.classList.remove("is-open");
 }
 
-function closeApiKeyModal() {
-	if (isLoginMode()) {
+function openLogoutConfirmModal() {
+	closeApiKeyModal();
+	closePredictionInfoModal();
+	state.apiKeyLogoutConfirmArmed = false;
+	if (!el.logoutConfirmModal) {
 		return;
 	}
+	el.logoutConfirmModal.classList.add('is-open');
+	if (el.confirmLogoutBtn) {
+		window.setTimeout(() => el.confirmLogoutBtn.focus(), 40);
+	}
+}
+
+function closeLogoutConfirmModal() {
+	if (!el.logoutConfirmModal) {
+		return;
+	}
+	state.apiKeyLogoutConfirmArmed = false;
+	el.logoutConfirmModal.classList.remove('is-open');
+}
+
+function closeApiKeyModal() {
+	if (isLoginMode()) {
+		if (el.apiKeyModal) {
+			el.apiKeyModal.style.display = 'flex';
+			el.apiKeyModal.classList.remove('is-closing');
+			el.apiKeyModal.classList.add('is-open');
+		}
+		syncSettingsModalPageShiftState();
+		return;
+	}
+	if (state.settingsModalCloseTimerId) {
+		window.clearTimeout(state.settingsModalCloseTimerId);
+		state.settingsModalCloseTimerId = null;
+	}
+	state.apiKeyLogoutConfirmArmed = false;
+	el.apiKeyModal.style.display = 'flex';
 	el.apiKeyModal.classList.remove("is-open");
-	el.apiKeyInput.value = "";
+	el.apiKeyModal.classList.add('is-closing');
+	syncSettingsModalPageShiftState();
+	state.settingsModalCloseTimerId = window.setTimeout(() => {
+		if (!el.apiKeyModal) {
+			return;
+		}
+		el.apiKeyModal.style.display = 'none';
+		el.apiKeyModal.classList.remove('is-closing');
+		syncSettingsModalPageShiftState();
+		state.settingsModalCloseTimerId = null;
+	}, 360);
+	if (el.apiKeyInput) {
+		el.apiKeyInput.value = "";
+	}
 }
 
 function saveApiKeySettings() {
-	const nextKey = (el.apiKeyInput.value || "").trim();
+	const nextKey = normalizeApiKeyInput(el.apiKeyInput.value || "");
+	if (el.apiKeyInput) {
+		el.apiKeyInput.value = nextKey;
+	}
 	if (!nextKey) {
 		setStatus("API key cannot be empty.", "error");
 		el.apiKeyInput.focus();
@@ -1061,6 +2048,7 @@ function saveApiKeySettings() {
 	}
 
 	if (state.apiKey === nextKey) {
+		state.apiKeyLogoutConfirmArmed = false;
 		syncApiKeyModalMode();
 		closeApiKeyModal();
 		setStatus("API key already saved.", "ok");
@@ -1068,11 +2056,16 @@ function saveApiKeySettings() {
 	}
 
 	state.apiKey = nextKey;
+	state.apiKeyLogoutConfirmArmed = false;
+	addSavedApiKey(nextKey);
+	syncSavedApiKeySelect();
 	state.savedSports = loadSavedSports();
 	syncApiKeyModalMode();
 	syncCatalogScopeButtons();
 	try {
-		localStorage.setItem(STORAGE_KEY, nextKey);
+		if (state.secureMode !== true) {
+			localStorage.setItem(STORAGE_KEY, nextKey);
+		}
 		sessionStorage.setItem(STORAGE_KEY, nextKey);
 	} catch {
 		// Ignore storage failures.
@@ -1092,7 +2085,7 @@ function saveApiKeySettings() {
 	} else {
 		loadAllSportsUpcoming(nextKey);
 	}
-	preloadAllRangeViews(nextKey);
+	persistRefreshViewState();
 }
 
 function setRangeSelection(rangeKey) {
@@ -1104,34 +2097,66 @@ function setRangeSelection(rangeKey) {
 		return;
 	}
 	if (!state.apiKey) {
+		if (state.isInitialHydration === true) {
+			state.timeRange = normalizedRange;
+			state.timeRangeSelected = true;
+			saveRangeSelection(normalizedRange);
+			if (normalizedRange === 'pastWeek') {
+				state.recentResultsLookbackDays = 2;
+				if (state.activeSportKey) {
+					loadRecentResultsForSport(state.activeSportKey, '');
+					persistRefreshViewState();
+					return;
+				}
+				loadRecentResultsForSelectedScope('');
+				persistRefreshViewState();
+				return;
+			}
+			if (state.activeSportKey) {
+				loadUpcomingForSport(state.activeSportKey, '');
+				persistRefreshViewState();
+				return;
+			}
+			loadAllSportsUpcoming('');
+			persistRefreshViewState();
+			return;
+		}
 		openApiKeyModal();
 		setStatus('No API key found. Add your Odds API key to continue.', 'error');
+		persistRefreshViewState();
 		return;
 	}
 	state.timeRange = normalizedRange;
 	state.timeRangeSelected = true;
 	saveRangeSelection(normalizedRange);
 	if (normalizedRange === 'pastWeek') {
+		state.recentResultsLookbackDays = 2;
 		if (state.activeSportKey) {
 			loadRecentResultsForSport(state.activeSportKey, state.apiKey);
+			persistRefreshViewState();
 			return;
 		}
 		loadRecentResultsForSelectedScope(state.apiKey);
+		persistRefreshViewState();
 		return;
 	}
 	if (normalizedRange === 'live') {
 		if (state.activeSportKey) {
 			loadUpcomingForSport(state.activeSportKey, state.apiKey);
+			persistRefreshViewState();
 			return;
 		}
 		loadAllSportsUpcoming(state.apiKey);
+		persistRefreshViewState();
 		return;
 	}
 	if (state.activeSportKey) {
 		loadUpcomingForSport(state.activeSportKey, state.apiKey);
+		persistRefreshViewState();
 		return;
 	}
 	loadAllSportsUpcoming(state.apiKey);
+	persistRefreshViewState();
 }
 
 async function preloadAllRangeViews(apiKey) {
@@ -1165,9 +2190,20 @@ async function preloadAllRangeViews(apiKey) {
 					const historyPayload = historyResponse.ok ? await historyResponse.json() : [];
 					const oddsByEventId = buildOddsByEventId(Array.isArray(oddsPayload) ? oddsPayload : []);
 					const mergedHistoryRows = mergeRollingHistoryRows(readCache('rolling_history_' + sportKey), Array.isArray(historyPayload) ? historyPayload : []);
+					const eventRows = Array.isArray(eventPayload) ? eventPayload : [];
+					const oddsRows = Array.isArray(oddsPayload) ? oddsPayload : [];
+					const historyRows = Array.isArray(historyPayload) ? historyPayload : [];
+					const completedHistoryRows = filterPastResults(historyRows, GAME_START_BUFFER_MS);
+
+					writeCache('upcoming_events_' + sportKey, eventRows);
+					writeCache('upcoming_odds_' + sportKey, oddsRows);
+					writeCache('upcoming_history_' + sportKey, mergedHistoryRows);
+					writeCache('recent_scores_' + sportKey, completedHistoryRows);
+					writeCache('recent_odds_' + sportKey, oddsRows);
+					writeCache('recent_history_' + sportKey, mergedHistoryRows);
 					writeCache('rolling_history_' + sportKey, mergedHistoryRows);
 					const historyMap = buildTeamHistoryMap(mergedHistoryRows);
-					const liveFiltered = getRowsForSelectedRange(Array.isArray(eventPayload) ? eventPayload : [], 'live', getRangeWindow('live'), Array.isArray(historyPayload) ? historyPayload : []);
+					const liveFiltered = getRowsForSelectedRange(eventRows, 'live', getRangeWindow('live'), historyRows);
 					for (const eventRow of liveFiltered) {
 						const eventId = eventRow && eventRow.id ? String(eventRow.id) : '';
 						const prediction = getPredictionForEvent(eventRow, eventId ? oddsByEventId[eventId] : null, historyMap, sportKey);
@@ -1186,17 +2222,13 @@ async function preloadAllRangeViews(apiKey) {
 							historyMap
 						});
 					}
-					const recentRows = Array.isArray(historyPayload) ? historyPayload : [];
-					const completedRows = filterPastResults(recentRows, GAME_START_BUFFER_MS);
+					const completedRows = completedHistoryRows;
 					for (const row of completedRows.slice(0, 7)) {
 						const eventId = row && row.id ? String(row.id) : '';
 						const oddsRow = eventId ? oddsByEventId[eventId] || null : null;
 						const prediction = getPredictionForEvent(row, oddsRow, historyMap, sportKey);
 						if (!prediction || !prediction.predictedTeam) {
 							recentItems.push({ sportKey, sportTitle: sport.title ? String(sport.title) : sportKey, start: row && row.commence_time ? String(row.commence_time) : '', row, oddsRow, historyMap, prediction: prediction || null });
-							continue;
-						}
-						if (!matchesWinRateFilter(prediction)) {
 							continue;
 						}
 						recentItems.push({ sportKey, sportTitle: sport.title ? String(sport.title) : sportKey, start: row && row.commence_time ? String(row.commence_time) : '', row, oddsRow, historyMap, prediction });

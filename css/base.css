@@ -1,25 +1,25 @@
 :root {
-  --navy: #0b1524;
-  --navy-deep: #070d18;
-  --navy-soft: #11263f;
-  --navy-lighter: #dfeaf8;
-  --paper: #0d1726;
-  --panel: #121d2d;
-  --panel-alt: #162638;
-  --text: #edf5ff;
-  --text-strong: #f7fbff;
-  --text-muted: #9bb1cb;
-  --line: rgba(170, 197, 235, 0.16);
-  --line-strong: rgba(170, 197, 235, 0.22);
+  --navy: #0f3a2a;
+  --navy-deep: #092519;
+  --navy-soft: #18523a;
+  --navy-lighter: #f1fff7;
+  --paper: #0d2d1f;
+  --panel: #113726;
+  --panel-alt: #184932;
+  --text: #effff5;
+  --text-strong: #ffffff;
+  --text-muted: #c6ebd4;
+  --line: rgba(117, 171, 137, 0.22);
+  --line-strong: rgba(117, 171, 137, 0.34);
   --shadow: rgba(2, 6, 12, 0.56);
   --success: #38c27c;
   --warning: #f3b75d;
   --danger: #ef5d5d;
   --danger-strong: #b83a3a;
-  --login-bg-a: rgba(59, 125, 219, 0.28);
-  --login-bg-b: rgba(106, 164, 255, 0.18);
-  --login-bg-base-top: rgba(7, 13, 24, 0.96);
-  --login-bg-base-bottom: rgba(7, 13, 24, 1);
+  --login-bg-a: rgba(182, 244, 203, 0.24);
+  --login-bg-b: rgba(241, 255, 247, 0.2);
+  --login-bg-base-top: rgba(14, 56, 39, 0.99);
+  --login-bg-base-bottom: rgba(10, 44, 31, 1);
   --radius-xl: 24px;
   --radius-lg: 18px;
   --radius-sm: 10px;
@@ -35,12 +35,12 @@
 }
 
 *::-webkit-scrollbar-track {
-  background: rgba(177, 195, 214, 0.28);
+  background: rgba(225, 245, 234, 0.24);
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(91, 138, 196, 0.9), rgba(57, 104, 168, 0.8));
+  background: linear-gradient(180deg, rgba(118, 204, 146, 0.9), rgba(59, 143, 87, 0.88));
   border-radius: 999px;
 }
 
@@ -60,36 +60,22 @@ body {
   min-height: 100vh;
   font-family: "Barlow", sans-serif;
   color: var(--text);
-  background:
-    radial-gradient(circle at 15% 20%, var(--login-bg-a), transparent 40%),
-    radial-gradient(circle at 85% 80%, var(--login-bg-b), transparent 42%),
-    linear-gradient(180deg, var(--login-bg-base-top), var(--login-bg-base-bottom));
+  background: #0a0a0a;
   padding: 18px;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
+html {
+  overflow-x: hidden;
+}
+
 body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(circle at 50% -30%, rgba(167, 206, 255, 0.16), rgba(7, 13, 24, 0));
-  z-index: 0;
+  content: none;
 }
 
 body::after {
-  content: "";
-  position: fixed;
-  inset: -25%;
-  pointer-events: none;
-  background:
-    radial-gradient(circle, rgba(114, 174, 255, 0.14) 0 18%, transparent 20%),
-    radial-gradient(circle, rgba(47, 112, 201, 0.12) 0 15%, transparent 17%);
-  background-size: 260px 260px, 320px 320px;
-  background-position: 0 0, 140px 90px;
-  animation: app-background-drift 22s linear infinite;
-  opacity: 0.7;
-  z-index: 0;
+  content: none;
 }
 
 @keyframes app-background-drift {
@@ -109,7 +95,7 @@ button {
   border-radius: var(--radius-sm);
   padding: 8px 11px;
   color: var(--text-strong);
-  background: linear-gradient(180deg, rgba(0, 52, 102, 0.96), rgba(0, 35, 70, 0.98));
+  background: linear-gradient(180deg, rgba(46, 141, 80, 0.98), rgba(24, 101, 54, 0.99));
   cursor: pointer;
   font-size: 0.81rem;
   font-weight: 700;

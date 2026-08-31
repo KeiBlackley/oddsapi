@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -9,195 +9,191 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" referrerpolicy="no-referrer">
     
     <link rel="stylesheet" href="css/base.css"> 
     <link rel="stylesheet" href="css/layout.css">
     <link rel="stylesheet" href="css/components.css">
+
 </head>
 <body>
+    <div id="desktopShortcutBar" class="desktop-shortcut-bar appbar" aria-label="Keyboard shortcuts">
+        <button type="button" class="shortcut-chip" data-shortcut-key="A" aria-label="Shortcut A: all sports">
+            <span class="shortcut-keycap">A</span>
+            <span class="shortcut-help">All sports</span>
+        </button>
+        <button type="button" class="shortcut-chip" data-shortcut-key="F" aria-label="Shortcut F: favourites">
+            <span class="shortcut-keycap">F</span>
+            <span class="shortcut-help">Favourites</span>
+        </button>
+        <button type="button" class="shortcut-chip" data-shortcut-key="S" aria-label="Shortcut S: focus search">
+            <span class="shortcut-keycap">S</span>
+            <span class="shortcut-help">Search</span>
+        </button>
+        <button type="button" class="shortcut-chip" data-shortcut-key="R" aria-label="Shortcut R: results">
+            <span class="shortcut-keycap">R</span>
+            <span class="shortcut-help">Results</span>
+        </button>
+        <button type="button" class="shortcut-chip" data-shortcut-key="L" aria-label="Shortcut L: live">
+            <span class="shortcut-keycap">L</span>
+            <span class="shortcut-help">Live</span>
+        </button>
+        <button type="button" class="shortcut-chip" data-shortcut-key="U" aria-label="Shortcut U: upcoming">
+            <span class="shortcut-keycap">U</span>
+            <span class="shortcut-help">Upcoming</span>
+        </button>
+        <button type="button" class="shortcut-chip" data-shortcut-key="B" aria-label="Shortcut B: back to catalog">
+            <span class="shortcut-keycap">B</span>
+            <span class="shortcut-help">Back</span>
+        </button>
+        <button type="button" class="shortcut-chip" data-shortcut-key="escape" aria-label="Shortcut Escape: settings and cancel">
+            <span class="shortcut-keycap">Esc</span>
+            <span class="shortcut-help">Settings / Cancel</span>
+        </button>
+    </div>
+
+    <div id="apiKeyModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="apiKeyModalTitle">
+        <div class="login-bk-logo" aria-hidden="true">BK</div>
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="apiKeyModalTitle">API Key Settings</h3>
+                <button type="button" class="modal-close icon-only" data-close-modal="true" aria-label="Close settings"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+            </div>
+            <label class="field-label" for="apiKeyInput">API key</label>
+            <select id="savedApiKeySelect" class="api-key-select hidden" aria-label="Saved API keys">
+                <option value="">Choose a saved API key</option>
+            </select>
+            <div class="api-key-row">
+                <input id="apiKeyInput" class="api-key-input" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your API key">
+                <button id="swapApiKeyBtn" type="button" class="api-key-swap-btn icon-only" aria-label="Sign out" title="Sign out"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i></button>
+            </div>
+            <div class="api-settings-separator" aria-hidden="true"></div>
+            <div class="settings-panel">
+                <div class="settings-section">
+                    <label class="field-label">Sports scope</label>
+                    <div class="settings-control-group" aria-label="Catalog scope selector">
+                        <button class="control-btn scope-btn is-active" type="button" data-scope="all" aria-pressed="true"><i class="fa-solid fa-globe" aria-hidden="true"></i>All Sports</button>
+                        <button class="control-btn scope-btn" type="button" data-scope="favorites" aria-pressed="false"><i class="fa-solid fa-star" aria-hidden="true"></i>Favourites</button>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <label id="resultsSportScopeLabel" class="field-label" for="resultsSportScopeSelect">Results sport scope (All Sports)</label>
+                    <select id="resultsSportScopeSelect" class="sport-scope-select" aria-label="Select which sport results to show">
+                        <option value="all">All Sports</option>
+                    </select>
+                </div>
+                <div class="settings-section">
+                    <label class="field-label">Time frames</label>
+                    <div class="settings-control-group" aria-label="Time range selector">
+                        <button class="control-btn range-btn" type="button" data-range="pastWeek" aria-pressed="false"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>Results</button>
+                        <button class="control-btn range-btn" type="button" data-range="live" aria-pressed="false"><i class="fa-solid fa-satellite-dish" aria-hidden="true"></i>Live</button>
+                        <button class="control-btn range-btn" type="button" data-range="today" aria-pressed="false"><i class="fa-solid fa-calendar-day" aria-hidden="true"></i>Upcoming</button>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <label class="field-label">Filter Games By</label>
+                    <div id="gameFilterGroup" class="settings-control-group game-filter-group" aria-label="Filter games by prediction quality">
+                        <button class="control-btn game-filter-btn" type="button" data-game-filter="positiveEv" aria-pressed="false"><i class="fa-solid fa-plus" aria-hidden="true"></i>EV</button>
+                        <button class="control-btn game-filter-btn" type="button" data-game-filter="greenWinRate" aria-pressed="false"><i class="fa-solid fa-arrow-trend-up" aria-hidden="true"></i>WIN%</button>
+                        <button class="control-btn game-filter-btn" type="button" data-game-filter="positiveEdge" aria-pressed="false"><i class="fa-solid fa-chart-line" aria-hidden="true"></i>EDGE</button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <div class="modal-actions-left">
+                    <button type="button" id="cancelApiKeyBtn" class="danger-btn"><i class="fa-solid fa-xmark" aria-hidden="true"></i>Cancel</button>
+                </div>
+                <div class="modal-actions-right">
+                    <button type="button" id="clearHistoryCacheBtn"><i class="fa-solid fa-broom" aria-hidden="true"></i>Clear Cache</button>
+                    <button type="button" id="saveApiKeyBtn"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>Save</button>
+                </div>
+            </div>
+            <p class="login-footer" aria-hidden="true">Made by Keirran Blackley.</p>
+        </div>
+    </div>
+
+    <div id="predictionInfoModal" class="modal prediction-info-modal" role="dialog" aria-modal="true" aria-labelledby="predictionInfoModalTitle">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="predictionInfoModalTitle">How Predictions Work</h3>
+                <button type="button" class="modal-close icon-only" data-close-modal="true" aria-label="Close prediction info"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+            </div>
+            <div class="info-content">
+                <section class="info-section">
+                    <h4>Prediction sources</h4>
+                    <ul class="info-list">
+                        <li>If a locked pregame snapshot exists after the cutoff window, the app reuses that snapshot so the displayed pick does not drift after kickoff.</li>
+                        <li>If no locked snapshot exists, the app tries recent team history, then full history, then market consensus from Sportsbet h2h odds.</li>
+                        <li>If neither usable history nor odds are available, a deterministic fallback prediction is shown, but confidence is low.</li>
+                    </ul>
+                </section>
+                <section class="info-section">
+                    <h4>Main prediction fields</h4>
+                    <div class="info-grid">
+                        <div class="info-card"><strong>Prediction label</strong><p>The highest-probability outcome: home team, away team, or draw.</p></div>
+                        <div class="info-card"><strong>Win chance</strong><p>The displayed lean percentage. In market mode, the strongest outcome is clamped into a narrow display band before being shown.</p></div>
+                        <div class="info-card"><strong>Edge</strong><p>The gap between the top and runner-up probabilities. Larger gaps produce stronger visual tiers and a higher confidence score.</p></div>
+                        <div class="info-card"><strong>Confidence</strong><p>Derived from edge size, probability agreement, and sample size. Fallback predictions are treated more conservatively.</p></div>
+                    </div>
+                </section>
+                <p class="info-note">These are conservative heuristics, not guarantees.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="logoutConfirmModal" class="modal logout-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="logoutConfirmModalTitle">
+        <div class="modal-card">
+            <div class="modal-header"><h3 id="logoutConfirmModalTitle">Confirm Logout</h3></div>
+            <div class="confirm-content"><p>Are you sure you want to sign out?</p></div>
+            <div class="modal-actions">
+                <div class="modal-actions-left">
+                    <button type="button" id="cancelLogoutBtn" class="danger-btn"><i class="fa-solid fa-xmark" aria-hidden="true"></i>Cancel</button>
+                </div>
+                <div class="modal-actions-right">
+                    <button type="button" id="confirmLogoutBtn" class="logout-confirm-btn"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>Sign Out</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="shell">
-        <header class="appbar">
-            <div class="brand">
-                <div class="control-stack">
-                    <div class="control-group" aria-label="Catalog scope selector">
-                        <button class="control-btn scope-btn is-active" type="button" data-scope="all" aria-pressed="true">All Sports</button>
-                        <button class="control-btn scope-btn" type="button" data-scope="favorites" aria-pressed="false">Favourites</button>
-                    </div>
-
-                    <div class="control-group" aria-label="Time range selector">
-                        <button class="control-btn range-btn" type="button" data-range="pastWeek" aria-pressed="false">Results</button>
-                        <button class="control-btn range-btn" type="button" data-range="live" aria-pressed="false">Live</button>
-                        <button class="control-btn range-btn" type="button" data-range="today" aria-pressed="false">Upcoming</button>
-                    </div>
-
-                </div>
-            </div>
-    
-            <div class="actions">
-                <button id="logoutBtn" type="button" class="logout-btn">Sign Out</button>
-                <div class="header-tools">
-                    <button id="infoBtn" type="button" class="info-btn" aria-haspopup="dialog" aria-controls="predictionInfoModal" aria-label="Prediction info" title="Prediction info">i</button>
-                    <button id="settingsBtn" type="button" class="settings-btn" aria-haspopup="dialog" aria-controls="apiKeyModal" aria-label="Settings" title="Settings">⚙</button>
-                </div>
-            </div>
-        </header>
-
-        <div id="sportFilterBar" class="secondary-appbar hidden" aria-label="Result sport filters">
-            <div id="sportFilterButtons" class="sport-filter-buttons"></div>
-        </div>
-
-        <div id="apiKeyModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="apiKeyModalTitle">
-            <div class="modal-card">
-                <div class="modal-header">
-                    <h3 id="apiKeyModalTitle">API Key Settings</h3>
-                    <button type="button" class="modal-close" data-close-modal="true" aria-label="Close settings">x</button>
-                </div>
-                
-                <label class="field-label" for="apiKeyInput">API key</label>
-                <div class="api-key-row">
-                    <input id="apiKeyInput" class="api-key-input" type="text" autocomplete="off" spellcheck="false" placeholder="Paste your API key">
-                    <button id="swapApiKeyBtn" type="button" class="api-key-swap-btn" aria-label="Swap API key" title="Swap API key">⇄</button>
-                </div>
-                <p id="apiKeyMasked" class="api-key-masked hidden" aria-live="polite"></p>
-
-                <div class="settings-panel">
-                    <div class="settings-section">
-                        <label class="field-label">Sports scope</label>
-                        <div class="settings-control-group" aria-label="Catalog scope selector">
-                            <button class="control-btn scope-btn is-active" type="button" data-scope="all" aria-pressed="true">All Sports</button>
-                            <button class="control-btn scope-btn" type="button" data-scope="favorites" aria-pressed="false">Favourites</button>
-                        </div>
-                    </div>
-
-                    <div class="settings-section">
-                        <label id="resultsSportScopeLabel" class="field-label" for="resultsSportScopeSelect">Results sport scope (All Sports)</label>
-                        <select id="resultsSportScopeSelect" class="sport-scope-select" aria-label="Select which sport results to show">
-                            <option value="all">All Sports</option>
-                        </select>
-                    </div>
-
-                    <div class="settings-section">
-                        <label class="field-label">Time frames</label>
-                        <div class="settings-control-group" aria-label="Time range selector">
-                            <button class="control-btn range-btn" type="button" data-range="pastWeek" aria-pressed="false">Results</button>
-                            <button class="control-btn range-btn" type="button" data-range="live" aria-pressed="false">Live</button>
-                            <button class="control-btn range-btn" type="button" data-range="today" aria-pressed="false">Upcoming</button>
-                        </div>
-                    </div>
-
-                </div>
-                
-                <div class="modal-actions">
-                    <div class="modal-actions-left">
-                        <button type="button" id="cancelApiKeyBtn" class="danger-btn">Cancel</button>
-                        <button type="button" id="clearHistoryCacheBtn">Clear Cache</button>
-                    </div>
-                    <div class="modal-actions-right">
-                        <button type="button" id="saveApiKeyBtn">Save</button>
-                    </div>
-                </div>
-
-                <p class="login-footer" aria-hidden="true">Made by Keirran Blackley.</p>
-            </div>
-        </div>  
-
-        <div id="predictionInfoModal" class="modal prediction-info-modal" role="dialog" aria-modal="true" aria-labelledby="predictionInfoModalTitle">
-            <div class="modal-card">
-                <div class="modal-header">
-                    <h3 id="predictionInfoModalTitle">How Predictions Work</h3>
-                    <button type="button" class="modal-close" data-close-modal="true" aria-label="Close prediction info">x</button>
-                </div>
-
-                <div class="info-content">
-                    <section class="info-section">
-                        <h4>Prediction sources</h4>
-                        <ul class="info-list">
-                            <li>If a locked pregame snapshot exists after the cutoff window, the app reuses that snapshot so the displayed pick does not drift after kickoff.</li>
-                            <li>If no locked snapshot exists, the app tries recent team history, then full history, then market consensus from Sportsbet h2h odds.</li>
-                            <li>If neither usable history nor odds are available, a deterministic fallback prediction is shown, but confidence is low.</li>
-                        </ul>
-                    </section>
-
-                    <section class="info-section">
-                        <h4>Main prediction fields</h4>
-                        <div class="info-grid">
-                            <div class="info-card">
-                                <strong>Prediction label</strong>
-                                <p>The highest-probability outcome: home team, away team, or draw.</p>
-                            </div>
-                            <div class="info-card">
-                                <strong>Win chance</strong>
-                                <p>The displayed lean percentage. In market mode, the strongest outcome is clamped into a narrow display band before being shown.</p>
-                            </div>
-                            <div class="info-card">
-                                <strong>Edge</strong>
-                                <p>The gap between the top and runner-up probabilities. Larger gaps produce stronger visual tiers and a higher confidence score.</p>
-                            </div>
-                            <div class="info-card">
-                                <strong>Confidence</strong>
-                                <p>Derived from edge size, probability agreement, and sample size. Fallback predictions are treated more conservatively.</p>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="info-section">
-                        <h4>Stats on each card</h4>
-                        <ul class="info-list">
-                            <li><strong>History win</strong> uses prior outcomes for the chosen side after conservative weighting and sample-size smoothing.</li>
-                            <li><strong>Model win</strong> uses the model-estimated probability after additional tightening.</li>
-                            <li><strong>Odds implied</strong> is computed from decimal odds as 1 / odds.</li>
-                            <li><strong>Home win</strong> and <strong>Away win</strong> show venue-specific win rates from historical results.</li>
-                            <li><strong>Home score</strong>, <strong>Away score</strong>, and <strong>Both score</strong> estimate scoring likelihood from recent form.</li>
-                            <li><strong>Venue edge</strong> compares home venue win rate against away venue performance.</li>
-                        </ul>
-                    </section>
-
-                    <section class="info-section">
-                        <h4>How the visuals are used</h4>
-                        <ul class="info-list">
-                            <li>The color tiers are display-only: red means weak, orange means moderate, green means strong, and gold means strongest.</li>
-                            <li>Win-chance badges use separate thresholds from the stat tiers, so a card can look strong in one dimension and average in another.</li>
-                            <li>The win-rate filter hides predictions below the minimum visible threshold, which is currently 50%.</li>
-                            <li>Top-bet suggestions and result cards reuse the same prediction object, so the same calculation drives all views.</li>
-                        </ul>
-                    </section>
-
-                    <p class="info-note">These are conservative heuristics, not guarantees. The app is designed to compare market signals and recent form, then present the result with clear confidence and history context.</p>
-                </div>
-            </div>
-        </div>
-
         <div class="layout">
             <section class="panel">
                 <div class="panel-head">
                     <div class="panel-head-row">
-                        <button id="backBtn" type="button" class="hidden" aria-label="Back">←</button>
+                        <button id="backBtn" type="button" class="hidden icon-only" aria-label="Sports catalog"><i class="fa-solid fa-futbol" aria-hidden="true"></i></button>
+                        <button id="refreshFeedBtn" type="button" class="settings-btn icon-only refresh-feed-btn" aria-label="Refresh feed" title="Refresh feed"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
                         <div class="panel-head-copy">
                             <h1 id="pageTitle" class="title">Sports Catalog</h1>
-                            <p id="panelSub" class="panel-sub">Live Odds & Predictions</p>
+                            <p id="panelSub" class="panel-sub">Live Odds &amp; Predictions</p>
+                        </div>
+                        <div class="panel-head-tools is-collapsed">
+                            <input id="sportsSearchInput" class="sports-search-input" type="search" placeholder="Search sports by key, title or group" aria-label="Search sports catalog" disabled tabindex="-1">
+                            <button id="searchToggleBtn" type="button" class="settings-btn search-toggle-btn icon-only" aria-label="Open search bar" aria-pressed="false" title="Open search bar"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i></button>
+                            <button id="settingsBtn" type="button" class="settings-btn icon-only" aria-haspopup="dialog" aria-controls="apiKeyModal" aria-label="Settings" title="Settings"><i class="fa-solid fa-gear" aria-hidden="true"></i></button>
+                            <button id="authStatusBtn" type="button" class="settings-btn icon-only auth-status-btn hidden" aria-label="Account" title="Signed in - click to manage"><i class="fa-solid fa-circle-user" aria-hidden="true"></i></button>
                         </div>
                     </div>
                 </div>
-
                 <div class="panel-body">
-                    <div class="catalog-tools">
-                        <input id="sportsSearchInput" class="sports-search-input" type="search" placeholder="Search sports by key, title or group" aria-label="Search sports catalog">
-                    </div>
-                    <div id="status" class="status" aria-live="polite"></div>
                     <div id="tableWrap" class="table-wrap">
                         <div class="empty">No data loaded yet.</div>
                     </div>
-                    
                     <div id="upcomingWrap" class="subcard hidden">
-                        <p class="subhead">Upcoming Games (next 7 days)</p>
-                        <div class="empty">Click a sport to load upcoming games.</div>
+                        <p class="subhead">Games</p>
+                        <div class="empty">Click a sport to load the selected range.</div>
                     </div>
                 </div>
             </section>
         </div>
-
         <footer class="site-footer">Made by Keirran Blackley.</footer>
     </div>
+    <div id="globalLoadingOverlay" class="loading-overlay" aria-hidden="true">
+        <div class="loading-overlay-spinner" role="status" aria-live="polite" aria-label="Loading">
+            <i class="fa-solid fa-rotate fa-spin" aria-hidden="true"></i>
+        </div>
+    </div>
+    <div id="status" class="status" aria-live="polite"></div>
 
     <script src="js/config.js"></script>
     <script src="js/catalog.js"></script>

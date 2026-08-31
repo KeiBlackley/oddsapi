@@ -124,7 +124,7 @@ function renderSportsTable(rows) {
 	const sortedVisibleRows = sortCatalogRows(visibleRows);
 
 	if (!sortedVisibleRows.length) {
-		el.tableWrap.innerHTML = '<div class="empty">' + escapeHtml(state.catalogScope === 'favorites' ? 'No favourited sports saved yet.' : 'No sports available.') + '</div>';
+		el.tableWrap.innerHTML = '<div class="empty">' + escapeHtml(state.catalogScope === 'favorites' ? 'No favourite sports saved yet.' : 'No sports available.') + '</div>';
 		syncCatalogScopeButtons();
 		return;
 	}
@@ -138,11 +138,13 @@ function renderSportsTable(rows) {
 			? (state.favoriteFlash.type === 'removed' ? ' flash-removed' : ' flash-saved')
 			: '';
 		const isSaved = isSportSaved(key);
-		const starClass = isSaved ? " active" : "";
+		const starClass = isSaved ? " active remove-btn" : "";
 		const actionLabel = isSaved ? "Remove sport" : "Save sport";
+		const actionCardLabel = title || 'Sport';
+		const keyCardLabel = group || 'Group';
 		return '<tr class="sport-row' + activeClass + flashClass + '" tabindex="0" data-sport-key="' + escapeHtml(key) + '">'
-			+ '<td data-label="Action"><button type="button" class="star-btn' + starClass + '" data-star-key="' + escapeHtml(key) + '" data-unsaved-icon="+" data-unsaved-hover-icon="★" data-saved-icon="★" data-saved-hover-icon="🗑" aria-label="' + escapeHtml(actionLabel) + '" title="' + escapeHtml(actionLabel) + '"></button></td>'
-			+ '<td class="mono" data-label="Key">' + escapeHtml(key) + '</td>'
+			+ '<td data-label="' + escapeHtml(actionCardLabel) + '"><button type="button" class="star-btn' + starClass + '" data-star-key="' + escapeHtml(key) + '" aria-label="' + escapeHtml(actionLabel) + '" title="' + escapeHtml(actionLabel) + '"></button></td>'
+			+ '<td class="mono" data-label="' + escapeHtml(keyCardLabel) + '">' + escapeHtml(key) + '</td>'
 			+ '<td data-label="Title">' + escapeHtml(title) + '</td>'
 			+ '<td data-label="Group">' + escapeHtml(group) + '</td>'
 			+ '</tr>';
@@ -160,25 +162,46 @@ function renderSportsTable(rows) {
 	syncCatalogScopeButtons();
 }
 
-async function loadSportsCatalog(apiKey) {
+async function loadSportsCatalog(apiKey, options = {}) {
+	const shouldSkipLoadStamp = Boolean(options && options.skipLoadStamp === true);
+	const forceRefresh = Boolean(options && options.forceRefresh === true);
+	let apiCreditsUsed = 0;
+	beginBusyOverlay();
 	setStatus('Loading sports catalog...', '');
 	try {
+		const cachedRows = readCache("sports_catalog");
+		if (!forceRefresh && Array.isArray(cachedRows) && cachedRows.length) {
+			renderSportsTable(cachedRows);
+			const visibleCount = state.catalogScope === 'favorites'
+				? getLoadedSportsCount()
+				: cachedRows.length;
+			if (!shouldSkipLoadStamp) {
+				const cachedLoadedAt = readCacheTimestamp('sports_catalog');
+				markDataLoaded(visibleCount, Number.isFinite(cachedLoadedAt) ? cachedLoadedAt : Date.now());
+			}
+			setStatus('Sports loaded from cache: ' + visibleCount, 'ok');
+			return 0;
+		}
+
 		const url = BASE_URL + '/sports/?apiKey=' + encodeURIComponent(apiKey);
-		const response = await fetch(url);
-		const payload = await response.json();
+		const response = await fetchWithTimeout(url);
+		apiCreditsUsed = getApiCreditsUsedFromResponses([response]);
+		const payload = await safeReadJson(response, []);
 
 		if (!response.ok) {
-			const message = payload && payload.message ? String(payload.message) : 'Request failed';
+			const message = payload && payload.message ? String(payload.message) : (response.statusText || 'Request failed');
 			throw new Error(message);
 		}
 
 		const rows = Array.isArray(payload) ? payload : [];
-		writeCache("sports_catalog", rows);
+		const cacheSavedAt = writeCache("sports_catalog", rows);
 		renderSportsTable(rows);
 		const visibleCount = state.catalogScope === 'favorites'
 			? getLoadedSportsCount()
 			: rows.length;
-		markDataLoaded();
+		if (!shouldSkipLoadStamp) {
+			markDataLoaded(visibleCount, cacheSavedAt);
+		}
 		setStatus('Sports loaded: ' + visibleCount, 'ok');
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
@@ -190,5 +213,8 @@ async function loadSportsCatalog(apiKey) {
 			setStatus('Failed to load sports catalog: ' + message, 'error');
 			el.tableWrap.innerHTML = '<div class="empty">Unable to load sports catalog.</div>';
 		}
+	} finally {
+		endBusyOverlay();
 	}
+	return apiCreditsUsed;
 }
