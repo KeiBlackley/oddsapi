@@ -16,12 +16,10 @@ const RANGE_SELECTION_KEY = "keieye_selected_range_v1";
 const LAST_DATA_LOAD_KEY = "keieye_last_data_load_v1";
 const GAME_FILTERS_KEY = "keieye_game_filters_v1";
 const REFRESH_VIEW_STATE_KEY = "keieye_refresh_view_state_v1";
-const SEARCH_CREDITS_KEY = "keieye_search_credits_v1";
 const NETWORK_TIMEOUT_MS = 25000;
 const MAX_SEARCH_INPUT_LENGTH = 120;
 const MAX_API_KEY_LENGTH = 256;
 const MAX_SAVED_API_KEYS = 20;
-const MAX_SEARCH_CREDITS = 20;
 
 const el = {
 	infoBtn: document.getElementById("infoBtn"),
@@ -57,11 +55,9 @@ const el = {
 	sportsSearchInput: document.getElementById("sportsSearchInput"),
 	searchToggleBtn: document.getElementById("searchToggleBtn"),
 	globalLoadingOverlay: document.getElementById("globalLoadingOverlay"),
-	searchCreditBar: null,
-	searchCreditCount: null,
-	resetSearchCreditsBtn: null,
 	tableWrap: document.getElementById("tableWrap"),
 	upcomingWrap: document.getElementById("upcomingWrap"),
+	dashboardWrap: document.getElementById("dashboardWrap"),
 	sportFilterBar: document.getElementById("sportFilterBar"),
 	sportFilterButtons: document.getElementById("sportFilterButtons")
 };
@@ -117,73 +113,12 @@ const state = {
 	},
 	lastLoadedAt: null,
 	lastLoadCreditCost: 0,
-	searchCreditsRemaining: MAX_SEARCH_CREDITS,
 	activeLoadingToken: 0,
 	settingsModalCloseTimerId: null,
 	statusHideTimerId: null,
 	busyOverlayCount: 0,
 	isInitialHydration: false
 };
-
-function clampSearchCredits(value) {
-	const parsed = Number(value);
-	if (!Number.isFinite(parsed)) {
-		return MAX_SEARCH_CREDITS;
-	}
-	return Math.max(0, Math.min(MAX_SEARCH_CREDITS, Math.trunc(parsed)));
-}
-
-function readSearchCredits() {
-	try {
-		const raw = localStorage.getItem(SEARCH_CREDITS_KEY);
-		if (!raw) {
-			return MAX_SEARCH_CREDITS;
-		}
-		return clampSearchCredits(raw);
-	} catch {
-		return MAX_SEARCH_CREDITS;
-	}
-}
-
-function persistSearchCredits() {
-	try {
-		localStorage.setItem(SEARCH_CREDITS_KEY, String(clampSearchCredits(state.searchCreditsRemaining)));
-	} catch {
-		// Ignore storage failures for credits.
-	}
-}
-
-function syncSearchCreditsUi() {
-	const remaining = clampSearchCredits(state.searchCreditsRemaining);
-	state.searchCreditsRemaining = remaining;
-	if (el.searchCreditCount) {
-		el.searchCreditCount.textContent = remaining + ' / ' + MAX_SEARCH_CREDITS;
-	}
-	if (el.searchCreditBar) {
-		el.searchCreditBar.classList.toggle('is-empty', remaining <= 0);
-	}
-}
-
-function consumeSearchCredits(cost = 1) {
-	const normalizedCost = Math.max(1, Math.trunc(Number(cost) || 1));
-	const remaining = clampSearchCredits(state.searchCreditsRemaining);
-	if (remaining < normalizedCost) {
-		setStatus('No search credits remaining. Refresh or reset to continue.', 'error');
-		syncSearchCreditsUi();
-		return false;
-	}
-	state.searchCreditsRemaining = remaining - normalizedCost;
-	persistSearchCredits();
-	syncSearchCreditsUi();
-	return true;
-}
-
-function resetSearchCredits() {
-	state.searchCreditsRemaining = MAX_SEARCH_CREDITS;
-	persistSearchCredits();
-	syncSearchCreditsUi();
-	setStatus('Search credits reset to ' + MAX_SEARCH_CREDITS + '.', 'ok');
-}
 
 function beginTrackedLoading(creditCost = 0) {
 	state.activeLoadingToken = Math.max(0, Number(state.activeLoadingToken) || 0) + 1;
@@ -1467,22 +1402,30 @@ function setCatalogScope(scopeKey) {
 function setView(viewName) {
 	if (viewName === "upcoming" || viewName === "recent") {
 		state.view = viewName;
+	} else if (viewName === "dashboard") {
+		state.view = "dashboard";
 	} else {
 		state.view = "catalog";
 	}
-	const isDetailView = state.view !== "catalog";
+	const isDashboard = state.view === "dashboard";
+	const isDetailView = state.view === "upcoming" || state.view === "recent";
 	if (state.view === "upcoming") {
 		el.pageTitle.textContent = getGamesSectionTitle(state.timeRange);
 	} else if (state.view === "recent") {
 		el.pageTitle.textContent = "Recent Results";
+	} else if (isDashboard) {
+		el.pageTitle.textContent = "Dashboard";
 	} else {
 		el.pageTitle.textContent = state.catalogScope === 'favorites' ? 'Favourites Catalog' : 'Sports Catalog';
 	}
 	syncBackButtonMode();
-	el.tableWrap.classList.toggle("hidden", isDetailView);
+	el.tableWrap.classList.toggle("hidden", isDetailView || isDashboard);
 	el.upcomingWrap.classList.toggle("hidden", !isDetailView);
+	if (el.dashboardWrap) {
+		el.dashboardWrap.classList.toggle("hidden", !isDashboard);
+	}
 	state.rangeButtonsEnabled = true;
-	if (!isDetailView) {
+	if (!isDetailView && !isDashboard) {
 		state.timeRangeSelected = false;
 		state.timeRange = 'today';
 		state.resultSportFilter = 'all';
@@ -1536,8 +1479,18 @@ function setLoadingMessage(text) {
 	}
 }
 
+const _normalizeTeamNameCache = new Map();
 function normalizeTeamName(value) {
-	return String(value || "").trim().toLowerCase();
+	const raw = String(value || "");
+	let result = _normalizeTeamNameCache.get(raw);
+	if (result === undefined) {
+		result = raw.trim().toLowerCase();
+		if (_normalizeTeamNameCache.size > 2000) {
+			_normalizeTeamNameCache.clear();
+		}
+		_normalizeTeamNameCache.set(raw, result);
+	}
+	return result;
 }
 
 function normalizeRangeKey(rangeKey) {

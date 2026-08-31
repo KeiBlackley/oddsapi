@@ -1,4 +1,29 @@
 // --- App bootstrapping and event wiring ---
+
+const TOUR_STEPS = [
+	{ selector: '#desktopShortcutBar', title: 'Keyboard Shortcut Bar', desc: 'Every chip here is a live keyboard shortcut. Press the key on your keyboard to trigger the action instantly — no mouse needed.', position: 'bottom' },
+	{ selector: '[data-shortcut-key="D"]', title: 'Dashboard  ·  D', desc: 'Shows two line graphs: one for upcoming picks (dots coloured by win confidence) and one for recent results (green = won, red = lost). Y-axis is the predicted odds per game.', position: 'bottom' },
+	{ selector: '[data-shortcut-key="A"]', title: 'All Sports  ·  A', desc: 'Switches the catalog to every available sport from the API. Click any row to load its predictions and odds.', position: 'bottom' },
+	{ selector: '[data-shortcut-key="F"]', title: 'Favourites  ·  F', desc: 'Filters the catalog to only the sports you have starred. Star a sport from the table to save it here.', position: 'bottom' },
+	{ selector: '[data-shortcut-key="R"]', title: 'Results  ·  R', desc: 'Loads recent match results and scores each prediction against the real outcome. The Backtest card tracks historical accuracy over time.', position: 'bottom' },
+	{ selector: '[data-shortcut-key="L"]', title: 'Live  ·  L', desc: 'Shows games currently in progress with live scores. Predictions are locked at kickoff so you can monitor them in real time.', position: 'bottom' },
+	{ selector: '[data-shortcut-key="U"]', title: 'Upcoming  ·  U', desc: 'Lists upcoming games with model predictions, win %, edge %, and EV. The Next-Test card summarises confidence across all picks shown.', position: 'bottom' },
+	{ selector: '[data-shortcut-key="S"]', title: 'Search  ·  S', desc: 'Toggles the inline search bar. Type a sport name, key or group to filter whatever view is currently active.', position: 'bottom' },
+	{ selector: '[data-shortcut-key="B"]', title: 'Back  ·  B', desc: 'Returns you to the sports catalog from any predictions or results view.', position: 'bottom' },
+	{ selector: '[data-shortcut-key="escape"]', title: 'Settings  ·  Esc', desc: 'Opens the settings panel — manage your API key, switch sport scope, adjust the time range, and apply game filters.', position: 'bottom' },
+	{ selector: '#refreshFeedBtn', title: 'Refresh Feed', desc: 'Forces a live reload from the odds API, bypassing the cache. Use this to fetch the latest odds or updated scores.', position: 'bottom' },
+	{ selector: '#tableWrap', title: 'Sports Catalog', desc: 'Each row is a sport. Click a row to load its predictions. The star button saves a sport to Favourites. Column headers are sortable.', position: 'top' },
+];
+
+const MOBILE_TOUR_STEPS = [
+	{ selector: '#settingsBtn', title: 'Settings', desc: 'Your main navigation hub on mobile. Tap the gear to open the settings panel — this is where you switch between All Sports / Favourites, choose Results / Live / Upcoming, and manage your API key.', position: 'bottom' },
+	{ selector: '#refreshFeedBtn', title: 'Refresh Feed', desc: 'Forces a live reload from the odds API, bypassing the local cache. Use this after changing range or when you want the latest odds and scores.', position: 'bottom' },
+	{ selector: '#pageTitle', title: 'Current View', desc: 'Shows which view is active — Sports Catalog, Upcoming, Results, or Live. Switch views from the Settings panel.', position: 'bottom' },
+	{ selector: '#tableWrap', title: 'Sports Catalog', desc: 'Tap any sport row to load its predictions and odds. The star button saves a sport to your Favourites. Use the Settings panel to filter to Favourites only.', position: 'top' },
+];
+
+const _tourState = { active: false, step: 0, steps: TOUR_STEPS };
+
 function init() {
 	const appbars = Array.from(document.querySelectorAll('.appbar, .secondary-appbar'));
 	const scrollSources = [window];
@@ -28,23 +53,26 @@ function init() {
 	if (appbars.length) {
 		let lastScrollY = window.scrollY || 0;
 		let lastDirection = 'up';
+		let cachedThreshold = -1;
+		let rafPending = false;
 		const getScrollPosition = (source) => {
 			if (source === window) {
 				return window.scrollY || 0;
 			}
 			return source && source instanceof HTMLElement ? source.scrollTop : 0;
 		};
-		const getAppbarHideThreshold = () => {
-			return appbars.reduce((total, bar) => total + bar.getBoundingClientRect().height, 0);
+		const recomputeThreshold = () => {
+			cachedThreshold = appbars.reduce((total, bar) => total + bar.getBoundingClientRect().height, 0);
 		};
-		const updateAppbarVisibility = () => {
+		const applyAppbarVisibility = () => {
+			rafPending = false;
 			const currentScrollY = getScrollPosition(window);
 			const deltaY = currentScrollY - lastScrollY;
 			const hasMeaningfulMovement = Math.abs(deltaY) > 6;
 			if (hasMeaningfulMovement) {
 				lastDirection = deltaY > 0 ? 'down' : 'up';
 			}
-			const threshold = getAppbarHideThreshold();
+			const threshold = cachedThreshold;
 			const shouldHide = currentScrollY > threshold && lastDirection === 'down';
 			const shouldShow = currentScrollY <= threshold || lastDirection === 'up';
 			for (const bar of appbars) {
@@ -56,21 +84,24 @@ function init() {
 			}
 			lastScrollY = currentScrollY;
 		};
+		const updateAppbarVisibility = () => {
+			if (!rafPending) {
+				rafPending = true;
+				window.requestAnimationFrame(applyAppbarVisibility);
+			}
+		};
 		for (const source of scrollSources) {
 			source.addEventListener('scroll', updateAppbarVisibility, { passive: true });
 		}
-		window.addEventListener('resize', updateAppbarVisibility, { passive: true });
-		updateAppbarVisibility();
+		window.addEventListener('resize', () => {
+			recomputeThreshold();
+			updateAppbarVisibility();
+		}, { passive: true });
+		recomputeThreshold();
+		applyAppbarVisibility();
 	}
 
 	const restoredViewState = readRefreshViewState();
-	state.searchCreditsRemaining = readSearchCredits();
-	syncSearchCreditsUi();
-	if (el.resetSearchCreditsBtn) {
-		el.resetSearchCreditsBtn.addEventListener('click', () => {
-			resetSearchCredits();
-		});
-	}
 	state.secureMode = readSecureModeSetting();
 	persistSecureModeSetting(true);
 	if (state.secureMode === true) {
@@ -275,6 +306,7 @@ function init() {
 	}
 
 	if (el.sportsSearchInput) {
+		let _searchDebounceTimer = null;
 		el.sportsSearchInput.addEventListener('input', (event) => {
 			const rawInput = event.target && event.target.value ? String(event.target.value) : '';
 			const nextValue = clampText(rawInput, MAX_SEARCH_INPUT_LENGTH);
@@ -282,15 +314,21 @@ function init() {
 				event.target.value = nextValue;
 			}
 			const trimmed = nextValue.trim();
-			if (state.view === 'catalog') {
-				state.catalogSearch = trimmed;
-				renderSportsTable(state.sportsRows);
-				persistRefreshViewState();
-				return;
+			if (_searchDebounceTimer) {
+				window.clearTimeout(_searchDebounceTimer);
 			}
-			state.resultsSearch = trimmed;
-			rerenderActiveResultsView();
-			persistRefreshViewState();
+			_searchDebounceTimer = window.setTimeout(() => {
+				_searchDebounceTimer = null;
+				if (state.view === 'catalog') {
+					state.catalogSearch = trimmed;
+					renderSportsTable(state.sportsRows);
+					persistRefreshViewState();
+					return;
+				}
+				state.resultsSearch = trimmed;
+				rerenderActiveResultsView();
+				persistRefreshViewState();
+			}, 150);
 		});
 	}
 
@@ -710,6 +748,17 @@ function init() {
 			setRangeSelection('today');
 			return true;
 		}
+		if (key === 'i') {
+			flashShortcutContainer('i');
+			startTour();
+			return true;
+		}
+		if (key === 'd') {
+			flashShortcutContainer('d');
+			setView('dashboard');
+			renderDashboard();
+			return true;
+		}
 		return false;
 	};
 
@@ -822,3 +871,151 @@ function init() {
 init();
 
 document.addEventListener('contextmenu', (event) => event.preventDefault());
+
+// --- Tour ---
+function startTour() {
+	if (_tourState.active) {
+		return;
+	}
+	_tourState.active = true;
+	_tourState.step = 0;
+	_tourState.steps = window.innerWidth < 1199 ? MOBILE_TOUR_STEPS : TOUR_STEPS;
+	const overlay = document.getElementById('tourOverlay');
+	if (overlay) {
+		overlay.classList.add('is-active');
+		overlay.setAttribute('aria-hidden', 'false');
+		overlay.focus();
+	}
+	renderTourStep(0);
+}
+
+function endTour() {
+	_tourState.active = false;
+	const overlay = document.getElementById('tourOverlay');
+	if (overlay) {
+		overlay.classList.remove('is-active');
+		overlay.setAttribute('aria-hidden', 'true');
+	}
+}
+
+function tourNavigate(delta) {
+	const next = _tourState.step + delta;
+	if (next >= _tourState.steps.length) {
+		endTour();
+		return;
+	}
+	if (next < 0) {
+		return;
+	}
+	_tourState.step = next;
+	renderTourStep(next);
+}
+
+function renderTourStep(index) {
+	const step = _tourState.steps[index];
+	if (!step) {
+		endTour();
+		return;
+	}
+	const target = document.querySelector(step.selector);
+	const counter = document.getElementById('tourStepCounter');
+	const titleEl = document.getElementById('tourTitle');
+	const descEl = document.getElementById('tourDesc');
+	const prevBtn = document.getElementById('tourPrevBtn');
+	const nextBtn = document.getElementById('tourNextBtn');
+	if (counter) {
+		counter.textContent = (index + 1) + ' of ' + _tourState.steps.length;
+	}
+	if (titleEl) {
+		titleEl.textContent = step.title;
+	}
+	if (descEl) {
+		descEl.textContent = step.desc;
+	}
+	if (prevBtn) {
+		prevBtn.disabled = index === 0;
+	}
+	if (nextBtn) {
+		nextBtn.textContent = index === _tourState.steps.length - 1 ? 'Finish' : 'Next →';
+	}
+	const spotlight = document.getElementById('tourSpotlight');
+	if (spotlight) {
+		if (target) {
+			const rect = target.getBoundingClientRect();
+			const pad = 7;
+			spotlight.style.top = (rect.top - pad) + 'px';
+			spotlight.style.left = (rect.left - pad) + 'px';
+			spotlight.style.width = (rect.width + pad * 2) + 'px';
+			spotlight.style.height = (rect.height + pad * 2) + 'px';
+			spotlight.style.opacity = '1';
+		} else {
+			spotlight.style.opacity = '0';
+		}
+	}
+	positionTourCard(target, step.position);
+	if (target) {
+		target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+	}
+}
+
+function positionTourCard(target, preferred) {
+	const card = document.getElementById('tourCard');
+	if (!card) {
+		return;
+	}
+	const vw = window.innerWidth;
+	const vh = window.innerHeight;
+	const cardW = 320;
+	const margin = 14;
+	const gap = 14;
+	card.style.transform = 'none';
+	if (!target) {
+		card.style.top = Math.round(vh / 2 - 100) + 'px';
+		card.style.left = Math.round(vw / 2 - cardW / 2) + 'px';
+		return;
+	}
+	const rect = target.getBoundingClientRect();
+	const cardH = card.offsetHeight || 190;
+	const fitsBelow = rect.bottom + gap + cardH + margin < vh;
+	const fitsAbove = rect.top - gap - cardH - margin > 0;
+	let pos = preferred === 'top' ? (fitsAbove ? 'top' : 'bottom') : (fitsBelow ? 'bottom' : fitsAbove ? 'top' : 'bottom');
+	let top = pos === 'bottom' ? rect.bottom + gap : rect.top - gap - cardH;
+	let left = rect.left + rect.width / 2 - cardW / 2;
+	left = Math.max(margin, Math.min(vw - cardW - margin, left));
+	top = Math.max(margin, Math.min(vh - cardH - margin, top));
+	card.style.top = top + 'px';
+	card.style.left = left + 'px';
+}
+
+function initTour() {
+	const overlay = document.getElementById('tourOverlay');
+	const closeBtn = document.getElementById('tourCloseBtn');
+	const prevBtn = document.getElementById('tourPrevBtn');
+	const nextBtn = document.getElementById('tourNextBtn');
+	if (closeBtn) {
+		closeBtn.addEventListener('click', (e) => { e.stopPropagation(); endTour(); });
+	}
+	if (prevBtn) {
+		prevBtn.addEventListener('click', (e) => { e.stopPropagation(); tourNavigate(-1); });
+	}
+	if (nextBtn) {
+		nextBtn.addEventListener('click', (e) => { e.stopPropagation(); tourNavigate(1); });
+	}
+	if (overlay) {
+		overlay.addEventListener('click', () => { if (_tourState.active) { tourNavigate(1); } });
+		const tourCard = document.getElementById('tourCard');
+		if (tourCard) {
+			tourCard.addEventListener('click', (e) => e.stopPropagation());
+		}
+		overlay.addEventListener('keydown', (e) => {
+			if (!_tourState.active) {
+				return;
+			}
+			if (e.key === 'Escape') { e.preventDefault(); endTour(); }
+			else if (e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); tourNavigate(1); }
+			else if (e.key === 'ArrowLeft') { e.preventDefault(); tourNavigate(-1); }
+		});
+	}
+}
+
+initTour();

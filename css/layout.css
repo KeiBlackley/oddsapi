@@ -366,6 +366,16 @@
   transform: translateY(-1px);
 }
 
+.shortcut-bar-divider {
+  display: inline-flex;
+  align-items: center;
+  color: rgba(255, 255, 255, 0.28);
+  font-size: 0.68rem;
+  padding: 0 2px;
+  pointer-events: none;
+  user-select: none;
+}
+
 .shortcut-keycap {
   display: inline-flex;
   align-items: center;
@@ -397,15 +407,15 @@ body.auth-locked .desktop-shortcut-bar {
   .desktop-shortcut-bar {
     display: none;
   }
+
+  .shell {
+    padding-top: 0;
+  }
 }
 
 @media (max-width: 760px) {
-  .search-credit-bar {
-    padding-inline: 12px;
-  }
-
   .shell {
-    padding-top: 52px;
+    padding-top: 0;
   }
 
   body.settings-modal-open {

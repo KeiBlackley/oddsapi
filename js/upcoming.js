@@ -1,11 +1,7 @@
 // --- Upcoming/recent results rendering and prediction model ---
+const _escapeHtmlMap = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 function escapeHtml(value) {
-	return String(value)
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/\"/g, "&quot;")
-		.replace(/'/g, "&#39;");
+	return String(value).replace(/[&<>"']/g, (ch) => _escapeHtmlMap[ch]);
 }
 
 function clampNumber(value, min, max) {
@@ -39,6 +35,7 @@ const PREGAME_PREDICTION_STORE_KEY = "keieye_pregame_predictions_v1";
 const PREGAME_PREDICTION_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const BACKTEST_HISTORY_KEY = "keieye_backtest_history_v1";
 const BACKTEST_TREND_WINDOW_KEY = "keieye_backtest_trend_window_v1";
+const NEXTTEST_HISTORY_KEY = "keieye_nexttest_history_v1";
 const EV_TOOLTIP_TEXT = "Compares our probability against the live market odds. If your model says a team has a 60% chance to win, but the bookmaker's odds imply only a 50% chance, you have found +EV (Positive Expected Value).";
 
 function clonePredictionPayload(prediction) {
@@ -70,16 +67,24 @@ function getPregamePredictionEntryKey(eventRow, sportKey = "") {
 	return "fallback:" + (sport ? sport + ":" : "") + home + "|" + away + "|" + commence;
 }
 
+let _pregamePredictionStoreCache = null;
+
 function readPregamePredictionStore() {
+	if (_pregamePredictionStoreCache !== null) {
+		return _pregamePredictionStoreCache;
+	}
 	try {
 		const raw = localStorage.getItem(PREGAME_PREDICTION_STORE_KEY);
 		if (!raw) {
-			return {};
+			_pregamePredictionStoreCache = {};
+			return _pregamePredictionStoreCache;
 		}
 		const parsed = JSON.parse(raw);
-		return parsed && typeof parsed === 'object' ? parsed : {};
+		_pregamePredictionStoreCache = parsed && typeof parsed === 'object' ? parsed : {};
+		return _pregamePredictionStoreCache;
 	} catch {
-		return {};
+		_pregamePredictionStoreCache = {};
+		return _pregamePredictionStoreCache;
 	}
 }
 
@@ -100,8 +105,10 @@ function writePregamePredictionStore(store) {
 	}
 	try {
 		localStorage.setItem(PREGAME_PREDICTION_STORE_KEY, JSON.stringify(store));
+		_pregamePredictionStoreCache = store;
 	} catch {
 		// Ignore local storage write failures for prediction snapshots.
+		_pregamePredictionStoreCache = null;
 	}
 }
 
@@ -194,13 +201,7 @@ function getHistoryRowIdentity(row) {
 }
 
 function mergeRollingHistoryRows(existingRows, incomingRows, maxRows = ROLLING_HISTORY_MAX_ROWS, maxAgeDays = ROLLING_HISTORY_MAX_AGE_DAYS) {
-	const combined = [];
-	if (Array.isArray(existingRows)) {
-		combined.push(...existingRows);
-	}
-	if (Array.isArray(incomingRows)) {
-		combined.push(...incomingRows);
-	}
+	const combined = (Array.isArray(existingRows) ? existingRows : []).concat(Array.isArray(incomingRows) ? incomingRows : []);
 	if (!combined.length) {
 		return [];
 	}
@@ -2903,6 +2904,258 @@ function buildBacktestCardMarkup(backtest, evaluatedItems, scopeLabel = '') {
 		+ '</section>';
 }
 
+function buildNextTestSummary(items) {
+	const rows = Array.isArray(items)
+		? items.filter((item) => item && item.prediction && item.prediction.predictedTeam)
+		: [];
+	if (!rows.length) {
+		return null;
+	}
+	let winPctSum = 0;
+	let winPctCount = 0;
+	let edgePctSum = 0;
+	let edgePctCount = 0;
+	let tierGreen = 0;
+	let tierOrange = 0;
+	let tierRed = 0;
+	for (const item of rows) {
+		const winPct = Number(item.prediction.leanPct);
+		if (Number.isFinite(winPct)) {
+			winPctSum += winPct;
+			winPctCount += 1;
+			if (winPct >= 58) {
+				tierGreen += 1;
+			} else if (winPct >= 45) {
+				tierOrange += 1;
+			} else {
+				tierRed += 1;
+			}
+		}
+		const edgePct = Number(item.prediction.edgePct);
+		if (Number.isFinite(edgePct)) {
+			edgePctSum += edgePct;
+			edgePctCount += 1;
+		}
+	}
+	if (!winPctCount) {
+		return null;
+	}
+	return {
+		sampleSize: winPctCount,
+		avgWinPct: winPctSum / winPctCount,
+		avgEdgePct: edgePctCount ? edgePctSum / edgePctCount : NaN,
+		tierGreen,
+		tierOrange,
+		tierRed
+	};
+}
+
+function readNextTestHistory() {
+	try {
+		const raw = localStorage.getItem(NEXTTEST_HISTORY_KEY);
+		if (!raw) {
+			return [];
+		}
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return [];
+	}
+}
+
+function writeNextTestHistory(history) {
+	if (!Array.isArray(history)) {
+		return;
+	}
+	try {
+		localStorage.setItem(NEXTTEST_HISTORY_KEY, JSON.stringify(history));
+	} catch {
+		// Ignore local storage failures.
+	}
+}
+
+function saveNextTestSnapshot(scopeLabel, summary) {
+	if (!summary || !Number.isFinite(summary.sampleSize) || summary.sampleSize <= 0) {
+		return;
+	}
+	const history = readNextTestHistory();
+	history.push({
+		ts: new Date().toISOString(),
+		scope: String(scopeLabel || ''),
+		sampleSize: Number(summary.sampleSize),
+		avgWinPct: Number(summary.avgWinPct),
+		avgEdgePct: Number(summary.avgEdgePct),
+		tierGreen: Number(summary.tierGreen),
+		tierOrange: Number(summary.tierOrange),
+		tierRed: Number(summary.tierRed)
+	});
+	while (history.length > 16) {
+		history.shift();
+	}
+	writeNextTestHistory(history);
+}
+
+function getRecentNextTestTrend(limit = 5) {
+	const history = readNextTestHistory();
+	if (!history.length) {
+		return [];
+	}
+	const rows = history.slice(-Math.max(1, Number(limit) || 5));
+	return rows.map((entry) => ({
+		timestamp: entry && entry.ts ? String(entry.ts) : '',
+		sampleSize: Number(entry && entry.sampleSize),
+		avgWinPct: Number(entry && entry.avgWinPct)
+	})).filter((entry) => Number.isFinite(entry.sampleSize) && entry.sampleSize > 0
+		&& Number.isFinite(entry.avgWinPct));
+}
+
+function buildPerSportNextTestBreakdown(items) {
+	const rows = Array.isArray(items)
+		? items.filter((item) => item && item.prediction && item.prediction.predictedTeam)
+		: [];
+	const bySport = new Map();
+	for (const item of rows) {
+		const winPct = Number(item.prediction.leanPct);
+		if (!Number.isFinite(winPct)) {
+			continue;
+		}
+		const sportName = String(item.sportTitle || item.sportKey || 'Unknown').trim() || 'Unknown';
+		if (!bySport.has(sportName)) {
+			bySport.set(sportName, { sport: sportName, total: 0, winPctSum: 0 });
+		}
+		const target = bySport.get(sportName);
+		target.total += 1;
+		target.winPctSum += winPct;
+	}
+	return Array.from(bySport.values())
+		.filter((item) => item.total > 0)
+		.map((item) => ({
+			sport: item.sport,
+			sampleSize: item.total,
+			avgWinPct: item.winPctSum / item.total
+		}))
+		.sort((a, b) => b.sampleSize - a.sampleSize)
+		.slice(0, 4);
+}
+
+function buildNextTestTrendSparkline(rows) {
+	const safeRows = Array.isArray(rows)
+		? rows.filter((row) => row && Number.isFinite(Number(row.avgWinPct)))
+		: [];
+	if (!safeRows.length) {
+		return '';
+	}
+	const values = safeRows.map((row) => Number(row.avgWinPct));
+	const minVal = Math.min(...values, 0);
+	const maxVal = Math.max(...values, 100);
+	const spread = Math.max(1, maxVal - minVal);
+	const points = values.map((value, index) => {
+		const x = safeRows.length === 1 ? 80 : 12 + ((index / (safeRows.length - 1)) * 136);
+		const y = 26 - ((value - minVal) / spread) * 18;
+		return x + ',' + y.toFixed(2);
+	}).join(' ');
+	const firstPoint = values.length === 1 ? '80,26' : '';
+	const areaPoints = safeRows.length === 1
+		? '80,26 80,26 80,26'
+		: '12,26 ' + points + ' 148,26';
+	return '<svg class="backtest-sparkline" viewBox="0 0 160 34" preserveAspectRatio="none" aria-label="Next-test trend chart">'
+		+ '<polygon class="backtest-sparkline-area" points="' + areaPoints + '"></polygon>'
+		+ '<polyline class="backtest-sparkline-line" points="' + points + '" fill="none"></polyline>'
+		+ (firstPoint ? '<circle class="backtest-sparkline-dot" cx="80" cy="26" r="2.5"></circle>' : '')
+		+ '</svg>';
+}
+
+function buildNextTestCardMarkup(summary, items, scopeLabel = '') {
+	const safeSummary = summary && typeof summary === 'object' ? summary : null;
+	const hasData = safeSummary && Number.isFinite(safeSummary.sampleSize) && safeSummary.sampleSize > 0;
+	const trendWindow = getBacktestTrendWindow();
+	const trend = hasData
+		? (trendWindow === 1
+			? [{ timestamp: new Date().toISOString(), sampleSize: safeSummary.sampleSize, avgWinPct: safeSummary.avgWinPct }]
+			: getRecentNextTestTrend(trendWindow))
+		: [];
+	const trendHtml = trend.length
+		? '<div class="backtest-trend">'
+			+ trend.map((row) => {
+				const stamp = row.timestamp ? new Date(row.timestamp) : null;
+				const label = trendWindow === 1
+					? 'Current'
+					: stamp && Number.isFinite(stamp.getTime())
+						? stamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+						: 'Load';
+				return '<span class="meta-pill tier-neutral" title="n=' + row.sampleSize + '">'
+					+ escapeHtml(label + ' ' + row.avgWinPct.toFixed(1) + '%') + '</span>';
+			}).join('') + '</div>'
+		: '<p class="backtest-note">Trend builds as you reload Upcoming.</p>';
+
+	const perSport = buildPerSportNextTestBreakdown(Array.isArray(items) ? items : []);
+	const perSportHtml = perSport.length
+		? '<div class="backtest-sport-grid">'
+			+ perSport.map((item) => {
+				const winTier = getLikelihoodTierClass(item.avgWinPct);
+				return '<div class="backtest-sport-row">'
+					+ '<span>' + escapeHtml(item.sport) + '</span>'
+					+ '<strong class="' + winTier + '">' + escapeHtml(item.avgWinPct.toFixed(1) + '%') + '</strong>'
+					+ '<span>' + escapeHtml('n=' + item.sampleSize) + '</span>'
+					+ '</div>';
+			}).join('') + '</div>'
+		: '<p class="backtest-note">'
+			+ (hasData ? 'Not enough picks for per-sport split.' : 'No upcoming predictions to analyse.')
+			+ '</p>';
+
+	const toggleButton = (windowValue, label) => {
+		const isActive = trendWindow === windowValue;
+		const iconClass = windowValue === 1 ? 'fa-bolt' : 'fa-chart-line';
+		return '<button type="button" class="backtest-toggle-btn'
+			+ (isActive ? ' is-active' : '')
+			+ '" data-action="backtest-trend-window" data-window="' + windowValue
+			+ '" aria-pressed="' + (isActive ? 'true' : 'false') + '">'
+			+ '<i class="fa-solid ' + iconClass + '" aria-hidden="true"></i>'
+			+ escapeHtml(label) + '</button>';
+	};
+
+	const avgWinTier = hasData ? getLikelihoodTierClass(safeSummary.avgWinPct) : 'tier-neutral';
+	const avgEdgeStr = hasData && Number.isFinite(safeSummary.avgEdgePct)
+		? (safeSummary.avgEdgePct >= 0 ? '+' : '') + safeSummary.avgEdgePct.toFixed(1) + '%'
+		: 'N/A';
+	const avgEdgeTier = hasData && Number.isFinite(safeSummary.avgEdgePct)
+		? (safeSummary.avgEdgePct > 0 ? 'tier-green' : safeSummary.avgEdgePct < 0 ? 'tier-red' : 'tier-neutral')
+		: 'tier-neutral';
+
+	const summaryStats = hasData
+		? '<div class="summary-strip">'
+			+ '<div class="summary-stat"><span class="summary-label">Avg Win %</span>'
+			+ '<strong class="' + avgWinTier + '">' + escapeHtml(safeSummary.avgWinPct.toFixed(1) + '%') + '</strong></div>'
+			+ '<div class="summary-stat"><span class="summary-label">Avg Edge</span>'
+			+ '<strong class="' + avgEdgeTier + '">' + escapeHtml(avgEdgeStr) + '</strong></div>'
+			+ '<div class="summary-stat"><span class="summary-label">High Conf</span>'
+			+ '<strong class="tier-green">' + escapeHtml(String(safeSummary.tierGreen)) + ' picks</strong></div>'
+			+ '<div class="summary-stat"><span class="summary-label">Med / Low</span>'
+			+ '<strong>' + escapeHtml(safeSummary.tierOrange + ' / ' + safeSummary.tierRed) + '</strong></div>'
+			+ '</div>'
+		: '<div class="summary-strip"><div class="summary-stat">'
+			+ '<span class="summary-label">Status</span><strong>No upcoming predictions yet</strong>'
+			+ '</div></div>';
+
+	return '<section class="backtest-card" aria-label="Upcoming prediction overview">'
+		+ '<div class="backtest-head"><h3>Next-Test</h3>'
+		+ '<span class="meta-pill tier-neutral">'
+		+ escapeHtml((scopeLabel || 'Upcoming') + ' | n=' + (hasData ? safeSummary.sampleSize : 0))
+		+ '</span></div>'
+		+ summaryStats
+		+ '<div class="backtest-toggle" role="group" aria-label="Next-test trend window">'
+		+ toggleButton(1, 'Current')
+		+ toggleButton(5, 'Last 5')
+		+ toggleButton(10, 'Last 10')
+		+ '</div>'
+		+ '<p class="backtest-subhead">Recent Trend</p>'
+		+ (hasData ? buildNextTestTrendSparkline(trend) : '<p class="backtest-note">No recent next-test data yet.</p>')
+		+ trendHtml
+		+ '<p class="backtest-subhead">Per-Sport Breakdown</p>'
+		+ perSportHtml
+		+ '</section>';
+}
+
 function buildRecentSummary(events, oddsByEventId, historyMap = null, sportKey = "") {
 	let wins = 0;
 	let losses = 0;
@@ -3339,6 +3592,12 @@ function renderUpcomingEvents(sportKey, events, oddsByEventId, rangeKey = state.
 		return;
 	}
 
+	const nexttestSummary = buildNextTestSummary(visibleSummaryItems);
+	if (nexttestSummary) {
+		saveNextTestSnapshot(sportTitle, nexttestSummary);
+	}
+	const nexttestCardHtml = buildNextTestCardMarkup(nexttestSummary, visibleSummaryItems, sportTitle);
+
 	if (isTodayRange && showTomorrow && !hasTomorrowItems && hasTodayItems) {
 		el.upcomingWrap.innerHTML = '<p class="subhead">' + escapeHtml(getGamesSectionTitle(rangeKey)) + ' | ' + escapeHtml(sportTitle) + ' | ' + escapeHtml(rangeLabel) + '</p>'
 			+ sectionHtml
@@ -3357,6 +3616,7 @@ function renderUpcomingEvents(sportKey, events, oddsByEventId, rangeKey = state.
 			totalOddsText: upcomingSummary.totalOddsText,
 			multiOddsParts: upcomingSummary.multiOddsParts
 		})
+		+ nexttestCardHtml
 		+ sectionHtml
 		+ viewMoreHtml;
 }
@@ -3489,6 +3749,11 @@ function renderUpcomingEventsForSavedSports(items, totalSportCount, visibleSport
 	};
 
 	const upcomingSummary = buildUpcomingSummary(renderItems, {}, null, '');
+	const nexttestSummary = buildNextTestSummary(renderItems);
+	if (nexttestSummary) {
+		saveNextTestSnapshot('Saved Sports', nexttestSummary);
+	}
+	const nexttestCardHtml = buildNextTestCardMarkup(nexttestSummary, renderItems, 'Saved Sports');
 	const cardsHtml = sortByStartAsc(renderItems).map((item) => renderCard(item)).join('');
 	const todayCardsHtml = sortByStartAsc(todayItems).map((item) => renderCard(item)).join('');
 	const tomorrowCardsHtml = sortByStartAsc(tomorrowItems).map((item) => renderCard(item)).join('');
@@ -3498,6 +3763,7 @@ function renderUpcomingEventsForSavedSports(items, totalSportCount, visibleSport
 				totalOddsText: upcomingSummary.totalOddsText,
 				multiOddsParts: upcomingSummary.multiOddsParts
 			})
+			+ nexttestCardHtml
 			+ '<div class="upcoming-list compact">' + cardsHtml + '</div>'
 			+ '<div class="empty">No games found for tomorrow.</div>';
 		return;
@@ -3511,6 +3777,7 @@ function renderUpcomingEventsForSavedSports(items, totalSportCount, visibleSport
 				totalOddsText: upcomingSummary.totalOddsText,
 				multiOddsParts: upcomingSummary.multiOddsParts
 			})
+			+ nexttestCardHtml
 			+ todaySectionHtml
 			+ '<div class="upcoming-view-more-wrap upcoming-day-break"><div class="upcoming-separator" aria-hidden="true"></div><p class="upcoming-day-label">Tomorrow\'s Games</p></div>'
 			+ '<div class="upcoming-list compact">' + tomorrowCardsHtml + '</div>';
@@ -3522,6 +3789,7 @@ function renderUpcomingEventsForSavedSports(items, totalSportCount, visibleSport
 			totalOddsText: upcomingSummary.totalOddsText,
 			multiOddsParts: upcomingSummary.multiOddsParts
 		})
+		+ nexttestCardHtml
 		+ '<div class="upcoming-list compact">' + cardsHtml + '</div>'
 		+ viewMoreHtml;
 }
@@ -3594,9 +3862,6 @@ async function loadUpcomingForSport(sportKey, apiKey, options = {}) {
 		return;
 	}
 
-	if (!consumeSearchCredits(loadCost)) {
-		return;
-	}
 	const loadToken = beginTrackedLoading(loadCost);
 	const loadingStampCost = 3;
 	beginBusyOverlay();
@@ -3950,10 +4215,6 @@ async function loadRecentResultsForSelectedScope(apiKey, options = {}) {
 			return;
 		}
 
-		if (!consumeSearchCredits(loadCost)) {
-			return;
-		}
-
 		const allRecentItems = [];
 		let successfulSportLoads = 0;
 		let failedSportLoads = 0;
@@ -4101,9 +4362,6 @@ async function loadRecentResultsForSport(sportKey, apiKey, options = {}) {
 		return;
 	}
 
-	if (!consumeSearchCredits(loadCost)) {
-		return;
-	}
 	const loadToken = beginTrackedLoading(loadCost);
 	const loadingStampCost = 3;
 	beginBusyOverlay();
@@ -4310,9 +4568,6 @@ async function loadAllSportsUpcoming(apiKey, options = {}) {
 					continue;
 				}
 				if (!usedLiveRefresh) {
-					if (!consumeSearchCredits(loadCost)) {
-						return;
-					}
 					usedLiveRefresh = true;
 				}
 
@@ -4437,4 +4692,192 @@ async function loadAllSportsUpcoming(apiKey, options = {}) {
 			endBusyOverlay();
 		}
 	}
+}
+
+
+// --- Dashboard ---
+function getDashboardUpcomingPoints() {
+const seen = new Set();
+const rawItems = [];
+for (const item of (Array.isArray(state.allUpcomingGames) ? state.allUpcomingGames : [])) {
+const id = item && item.row && item.row.id ? String(item.row.id) : '';
+if (id && seen.has(id)) { continue; }
+if (id) { seen.add(id); }
+rawItems.push(item);
+}
+const activeData = state.activeUpcomingSportData;
+if (activeData && Array.isArray(activeData.events) && activeData.sportKey) {
+const oddsById = activeData.oddsByEventId || {};
+const hist = activeData.historyMap || null;
+const meta = (state.sportsByKey && state.sportsByKey[activeData.sportKey]) || {};
+for (const row of activeData.events) {
+const id = row && row.id ? String(row.id) : '';
+if (id && seen.has(id)) { continue; }
+if (id) { seen.add(id); }
+const oddsRow = id ? oddsById[id] : null;
+const prediction = getPredictionForEvent(row, oddsRow, hist, activeData.sportKey);
+if (!prediction || !prediction.predictedTeam) { continue; }
+rawItems.push({ sportKey: activeData.sportKey, sportTitle: meta.title || activeData.sportKey, home: row && row.home_team ? String(row.home_team) : 'Home', away: row && row.away_team ? String(row.away_team) : 'Away', start: row && row.commence_time ? String(row.commence_time) : '', prediction, row, oddsRow });
+}
+}
+const points = [];
+for (const item of rawItems) {
+if (!item || !item.prediction || !item.prediction.predictedTeam) { continue; }
+const oddsRaw = item.prediction.pregameOdds || getBookmakerOddsForPrediction(item.row, item.oddsRow, item.prediction);
+const odds = Number(oddsRaw);
+if (!Number.isFinite(odds) || odds <= 1) { continue; }
+points.push({ label: (item.home || '') + ' vs ' + (item.away || ''), sport: item.sportTitle || item.sportKey || '', start: item.start || '', odds, leanPct: Number(item.prediction.leanPct), won: null });
+}
+return points.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+}
+
+function getDashboardRecentPoints() {
+const allItems = Array.isArray(state.allRecentResultsItems) ? state.allRecentResultsItems : [];
+const activeData = state.activeRecentSportData;
+const sourceItems = allItems.length ? allItems : (activeData && Array.isArray(activeData.events) ? activeData.events.map((row) => {
+const id = row && row.id ? String(row.id) : '';
+const oddsRow = id && activeData.oddsByEventId ? activeData.oddsByEventId[id] : null;
+const prediction = getPredictionForEvent(row, oddsRow, activeData.historyMap || null, activeData.sportKey || '');
+const meta = (state.sportsByKey && state.sportsByKey[activeData.sportKey]) || {};
+return { row, oddsRow, prediction, sportKey: activeData.sportKey || '', sportTitle: meta.title || activeData.sportKey || '', home: row && row.home_team ? String(row.home_team) : '', away: row && row.away_team ? String(row.away_team) : '', start: row && row.commence_time ? String(row.commence_time) : '' };
+}) : []);
+const points = [];
+for (const item of sourceItems) {
+if (!item || !item.prediction || !item.prediction.predictedTeam) { continue; }
+const row = item.row || {};
+const oddsRaw = item.prediction.pregameOdds || getBookmakerOddsForPrediction(row, item.oddsRow, item.prediction);
+const odds = Number(oddsRaw);
+if (!Number.isFinite(odds) || odds <= 1) { continue; }
+const result = getPredictionResultForCompletedEvent(row, item.prediction.predictedTeam);
+points.push({ label: (item.home || (row.home_team ? String(row.home_team) : '')) + ' vs ' + (item.away || (row.away_team ? String(row.away_team) : '')), sport: item.sportTitle || item.sportKey || '', start: item.start || (row.commence_time ? String(row.commence_time) : ''), odds, leanPct: Number(item.prediction.leanPct), won: result && result.label === 'Won' ? true : result && result.label === 'Lost' ? false : null });
+}
+return points.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+}
+
+function buildOddsLineChartSvg(points, colorMode, chartId) {
+if (!Array.isArray(points) || !points.length) {
+return '<div class="dashboard-empty">No data yet — load Upcoming or Results first.</div>';
+}
+const W = 560, H = 160;
+const ML = 44, MR = 12, MT = 14, MB = 34;
+const plotW = W - ML - MR;
+const plotH = H - MT - MB;
+const yVals = points.map((p) => p.odds);
+const rawMin = Math.min.apply(null, yVals);
+const rawMax = Math.max.apply(null, yVals);
+const padY = Math.max(0.25, (rawMax - rawMin) * 0.2);
+const yMin = Math.max(1, rawMin - padY);
+const yMax = rawMax + padY;
+const yRange = Math.max(0.01, yMax - yMin);
+const n = points.length;
+const toX = function(i) { return ML + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW); };
+const toY = function(v) { return MT + plotH - ((v - yMin) / yRange) * plotH; };
+const axisY = (MT + plotH).toFixed(1);
+let gridSvg = '';
+let yAxisSvg = '';
+const yTickCount = 4;
+for (let t = 0; t <= yTickCount; t++) {
+const val = yMin + (t / yTickCount) * yRange;
+const y = toY(val).toFixed(1);
+gridSvg += '<line x1="' + ML + '" y1="' + y + '" x2="' + (W - MR) + '" y2="' + y + '" stroke="rgba(100,130,170,0.1)" stroke-width="1"/>';
+yAxisSvg += '<text x="' + (ML - 5) + '" y="' + (Number(y) + 4).toFixed(1) + '" font-size="10" fill="#5a7899" text-anchor="end">' + val.toFixed(2) + '</text>';
+}
+const pathD = points.map(function(p, i) { return (i === 0 ? 'M' : 'L') + toX(i).toFixed(1) + ',' + toY(p.odds).toFixed(1); }).join(' ');
+const areaD = pathD + ' L' + toX(n - 1).toFixed(1) + ',' + axisY + ' L' + ML + ',' + axisY + ' Z';
+const gradId = 'cg_' + (chartId || 'x');
+let dotsSvg = '';
+let xAxisSvg = '';
+const labelStep = Math.max(1, Math.ceil(n / 10));
+for (let i = 0; i < n; i++) {
+const p = points[i];
+const cx = toX(i).toFixed(1);
+const cy = toY(p.odds).toFixed(1);
+let fill;
+if (colorMode === 'result') {
+fill = p.won === true ? '#9ee4b7' : p.won === false ? '#f2a6a6' : '#7a94b0';
+} else {
+const lp = p.leanPct;
+fill = lp >= 58 ? '#9ee4b7' : lp >= 45 ? '#f5c842' : Number.isFinite(lp) ? '#f2a6a6' : '#7a94b0';
+}
+const tipLines = [p.label || ('Game ' + (i + 1)), 'Sport: ' + (p.sport || String.fromCharCode(8212)), 'Odds: ' + p.odds.toFixed(2)];
+if (colorMode === 'result' && p.won !== null) { tipLines.push('Result: ' + (p.won ? 'Won' : 'Lost')); }
+if (colorMode !== 'result' && Number.isFinite(p.leanPct)) { tipLines.push('Win: ' + p.leanPct.toFixed(1) + '%'); }
+dotsSvg += '<circle cx="' + cx + '" cy="' + cy + '" r="4" fill="' + fill + '" stroke="rgba(0,0,0,0.35)" stroke-width="1"><title>' + escapeHtml(tipLines.join('\n')) + '</title></circle>';
+if (i === 0 || i === n - 1 || i % labelStep === 0) {
+const stamp = p.start ? new Date(p.start) : null;
+const lbl = stamp && Number.isFinite(stamp.getTime()) ? stamp.toLocaleDateString([], { month: 'short', day: 'numeric' }) : String(i + 1);
+xAxisSvg += '<text x="' + cx + '" y="' + (Number(axisY) + 14).toFixed(1) + '" font-size="9" fill="#4a6a8a" text-anchor="middle">' + escapeHtml(lbl) + '</text>';
+}
+}
+return '<svg class="dashboard-chart-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet">'
++ '<defs><linearGradient id="' + gradId + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(158,228,183,0.22)"/><stop offset="100%" stop-color="rgba(158,228,183,0)"/></linearGradient></defs>'
++ '<line x1="' + ML + '" y1="' + MT + '" x2="' + ML + '" y2="' + axisY + '" stroke="rgba(100,130,170,0.25)" stroke-width="1"/>'
++ '<line x1="' + ML + '" y1="' + axisY + '" x2="' + (W - MR) + '" y2="' + axisY + '" stroke="rgba(100,130,170,0.25)" stroke-width="1"/>'
++ gridSvg
++ yAxisSvg
++ '<path d="' + areaD + '" fill="url(#' + gradId + ')"/>'
++ '<path d="' + pathD + '" stroke="rgba(158,228,183,0.65)" stroke-width="2" fill="none" stroke-linejoin="round" stroke-linecap="round"/>'
++ dotsSvg
++ xAxisSvg
++ '</svg>';
+}
+
+function buildDashboardStatLine(points, colorMode) {
+if (!points.length) { return ''; }
+const multi = points.reduce(function(acc, p) { return acc * p.odds; }, 1);
+if (colorMode === 'result') {
+let profit = 0, won = 0, lost = 0, pending = 0;
+for (const p of points) {
+if (p.won === true) { profit += (p.odds - 1); won++; }
+else if (p.won === false) { profit -= 1; lost++; }
+else { pending++; }
+}
+const sign = profit >= 0 ? '+' : '';
+return '<span>Flat $1 stake: <strong>' + sign + profit.toFixed(2) + '</strong></span>'
++ '<span>Won <strong>' + won + '</strong> / Lost <strong>' + lost + '</strong>' + (pending ? ' / Pending <strong>' + pending + '</strong>' : '') + '</span>'
++ '<span>Parlay: <strong>' + multi.toFixed(2) + String.fromCharCode(215) + '</strong></span>';
+}
+return '<span>Picks: <strong>' + points.length + '</strong></span>'
++ '<span>Parlay: <strong>' + multi.toFixed(2) + String.fromCharCode(215) + '</strong> (all win)</span>';
+}
+
+function buildDashboardLegend(colorMode) {
+if (colorMode === 'result') {
+return '<div class="dashboard-legend">'
++ '<span class="dashboard-legend-item"><span class="dashboard-legend-dot" style="background:#9ee4b7"></span>Won</span>'
++ '<span class="dashboard-legend-item"><span class="dashboard-legend-dot" style="background:#f2a6a6"></span>Lost</span>'
++ '<span class="dashboard-legend-item"><span class="dashboard-legend-dot" style="background:#7a94b0"></span>Pending / no score</span>'
++ '</div>';
+}
+return '<div class="dashboard-legend">'
++ '<span class="dashboard-legend-item"><span class="dashboard-legend-dot" style="background:#9ee4b7"></span>High conf (58%+)</span>'
++ '<span class="dashboard-legend-item"><span class="dashboard-legend-dot" style="background:#f5c842"></span>Medium (45-57%)</span>'
++ '<span class="dashboard-legend-item"><span class="dashboard-legend-dot" style="background:#f2a6a6"></span>Low (&lt;45%)</span>'
++ '</div>';
+}
+
+function renderDashboard() {
+if (!el.dashboardWrap) { return; }
+const upPoints = getDashboardUpcomingPoints();
+const rePoints = getDashboardRecentPoints();
+el.dashboardWrap.innerHTML = '<div class="dashboard">'
++ '<section class="dashboard-section">'
++ '<div class="dashboard-section-head">'
++ '<h2 class="dashboard-section-title">Upcoming Picks</h2>'
++ (upPoints.length ? '<span class="meta-pill tier-neutral">n=' + upPoints.length + '</span>' : '')
++ '</div>'
++ buildOddsLineChartSvg(upPoints, 'confidence', 'upcoming')
++ (upPoints.length ? buildDashboardLegend('confidence') : '')
++ (upPoints.length ? '<div class="dashboard-chart-stat">' + buildDashboardStatLine(upPoints, 'confidence') + '</div>' : '')
++ '</section>'
++ '<section class="dashboard-section">'
++ '<div class="dashboard-section-head">'
++ '<h2 class="dashboard-section-title">Recent Results</h2>'
++ (rePoints.length ? '<span class="meta-pill tier-neutral">n=' + rePoints.length + '</span>' : '')
++ '</div>'
++ buildOddsLineChartSvg(rePoints, 'result', 'recent')
++ (rePoints.length ? buildDashboardLegend('result') : '')
++ (rePoints.length ? '<div class="dashboard-chart-stat">' + buildDashboardStatLine(rePoints, 'result') + '</div>' : '')
++ '</section>'
++ '</div>';
 }

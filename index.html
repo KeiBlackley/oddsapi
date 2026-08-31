@@ -9,7 +9,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" referrerpolicy="no-referrer">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" referrerpolicy="no-referrer" media="print" onload="this.media='all'">
+    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" referrerpolicy="no-referrer"></noscript>
     
     <link rel="stylesheet" href="css/base.css"> 
     <link rel="stylesheet" href="css/layout.css">
@@ -18,6 +19,11 @@
 </head>
 <body>
     <div id="desktopShortcutBar" class="desktop-shortcut-bar appbar" aria-label="Keyboard shortcuts">
+        <button type="button" class="shortcut-chip" data-shortcut-key="D" aria-label="Shortcut D: dashboard">
+            <span class="shortcut-keycap">D</span>
+            <span class="shortcut-help">Dashboard</span>
+        </button>
+        <span class="shortcut-bar-divider" aria-hidden="true">|</span>
         <button type="button" class="shortcut-chip" data-shortcut-key="A" aria-label="Shortcut A: all sports">
             <span class="shortcut-keycap">A</span>
             <span class="shortcut-help">All sports</span>
@@ -26,10 +32,7 @@
             <span class="shortcut-keycap">F</span>
             <span class="shortcut-help">Favourites</span>
         </button>
-        <button type="button" class="shortcut-chip" data-shortcut-key="S" aria-label="Shortcut S: focus search">
-            <span class="shortcut-keycap">S</span>
-            <span class="shortcut-help">Search</span>
-        </button>
+        <span class="shortcut-bar-divider" aria-hidden="true"><i class="fa-solid fa-chevron-right"></i></span>
         <button type="button" class="shortcut-chip" data-shortcut-key="R" aria-label="Shortcut R: results">
             <span class="shortcut-keycap">R</span>
             <span class="shortcut-help">Results</span>
@@ -42,6 +45,11 @@
             <span class="shortcut-keycap">U</span>
             <span class="shortcut-help">Upcoming</span>
         </button>
+        <span class="shortcut-bar-divider" aria-hidden="true">|</span>
+        <button type="button" class="shortcut-chip" data-shortcut-key="S" aria-label="Shortcut S: focus search">
+            <span class="shortcut-keycap">S</span>
+            <span class="shortcut-help">Search</span>
+        </button>
         <button type="button" class="shortcut-chip" data-shortcut-key="B" aria-label="Shortcut B: back to catalog">
             <span class="shortcut-keycap">B</span>
             <span class="shortcut-help">Back</span>
@@ -49,6 +57,11 @@
         <button type="button" class="shortcut-chip" data-shortcut-key="escape" aria-label="Shortcut Escape: settings and cancel">
             <span class="shortcut-keycap">Esc</span>
             <span class="shortcut-help">Settings / Cancel</span>
+        </button>
+        <span class="shortcut-bar-divider" aria-hidden="true">|</span>
+        <button type="button" class="shortcut-chip" data-shortcut-key="I" aria-label="Shortcut I: info">
+            <span class="shortcut-keycap">I</span>
+            <span class="shortcut-help">Info</span>
         </button>
     </div>
 
@@ -183,6 +196,7 @@
                         <p class="subhead">Games</p>
                         <div class="empty">Click a sport to load the selected range.</div>
                     </div>
+                    <div id="dashboardWrap" class="subcard hidden"></div>
                 </div>
             </section>
         </div>
@@ -194,6 +208,24 @@
         </div>
     </div>
     <div id="status" class="status" aria-live="polite"></div>
+
+    <div id="tourOverlay" class="tour-overlay" aria-hidden="true" tabindex="-1">
+        <div id="tourSpotlight" class="tour-spotlight" aria-hidden="true"></div>
+        <div id="tourCard" class="tour-card" role="dialog" aria-labelledby="tourTitle">
+            <div class="tour-card-head">
+                <span id="tourStepCounter" class="tour-step-counter"></span>
+                <button type="button" id="tourCloseBtn" class="icon-only tour-close-btn" aria-label="End tour">
+                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+            </div>
+            <h4 id="tourTitle" class="tour-title"></h4>
+            <p id="tourDesc" class="tour-desc"></p>
+            <div class="tour-actions">
+                <button type="button" id="tourPrevBtn" class="tour-nav-btn" disabled>← Prev</button>
+                <button type="button" id="tourNextBtn" class="tour-nav-btn tour-next-btn">Next →</button>
+            </div>
+        </div>
+    </div>
 
     <script src="js/config.js"></script>
     <script src="js/catalog.js"></script>
