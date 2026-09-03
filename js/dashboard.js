@@ -12,7 +12,7 @@ function getBreakEvenWindowLabel(isRecent, hoursFilter, isLive) {
   if (!hoursFilter) { return isRecent ? 'All Recent' : 'All Upcoming'; }
   if (hoursFilter === 24) { return isRecent ? 'Last 24 HRS' : 'Next 24 HRS'; }
   if (hoursFilter === 48) { return isRecent ? 'Last 48 HRS' : 'Next 48 HRS'; }
-  if (hoursFilter === 168) { return 'Next Week'; }
+  if (hoursFilter === 168) { return isRecent ? 'Last 7 Days' : 'Next Week'; }
   if (hoursFilter === 336) { return 'Next Fortnight'; }
   if (hoursFilter === 720) { return 'Last Month'; }
   if (hoursFilter === 8760) { return 'Last Year'; }

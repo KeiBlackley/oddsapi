@@ -780,7 +780,9 @@ function handleRecentResultsViewMoreClick() {
 	}
 	const nextLookbackDays = Math.min(MAX_RECENT_RESULTS_LOOKBACK_DAYS, (Number(state.recentResultsLookbackDays) || RECENT_RESULTS_LOOKBACK_DAYS) + 1);
 	state.recentResultsLookbackDays = nextLookbackDays;
+	state.upcomingBePickLimit = nextLookbackDays * 24;
 	persistRefreshViewState();
+	rerenderActiveResultsView();
 	if (state.activeSportKey) {
 		loadRecentResultsForSport(state.activeSportKey, state.apiKey, { forceRefresh: true });
 		return;
@@ -3373,7 +3375,9 @@ function renderRecentResults(sportKey, events, oddsByEventId, historyMap = null)
 			: '';
 		const expandHint = insightsPanel ? '<p class="card-expand-hint">Tap card for matchup insights</p>' : '';
 		const cardExpandAttrs = insightsPanel ? ' data-expand-card="true" role="button" tabindex="0" aria-expanded="false"' : '';
-		const oddsBadge = predictionOdds ? '<span class="odds-pill" title="Pre-game odds at kickoff">Pre: ' + escapeHtml(predictionOdds) + '</span>' : '';
+		const oddsAndScoreBadge = hasPrediction
+			? '<span class="odds-pill" title="Pre-game odds and final score">Odds: ' + escapeHtml(predictionOdds || 'N/A') + ' | Score: ' + escapeHtml(scoreText || 'N/A') + '</span>'
+			: '';
 		const confidenceBadge = prediction && prediction.confidence
 			? '<span class="meta-pill ' + confidenceTierClass + '">Conf: ' + escapeHtml(confidenceText) + '</span>'
 			: '';
@@ -3401,10 +3405,9 @@ function renderRecentResults(sportKey, events, oddsByEventId, historyMap = null)
 			+ '<div class="prediction-stack">'
 			+ '<div class="prediction-row">'
 			+ '<p class="bet-name">' + escapeHtml(betName) + '</p>'
-			+ oddsBadge
+			+ oddsAndScoreBadge
 			+ '</div>'
 			+ '<div class="game-meta compact right-aligned">'
-			+ '<span class="meta-pill">Score: ' + escapeHtml(scoreText) + '</span>'
 			+ winBadge
 			+ edgeBadge
 			+ evBadge
@@ -4051,7 +4054,7 @@ function renderRecentResultsForSelectedScope(scopeLabel, items) {
 	const scopedItems = selectedSport === 'all'
 		? items
 		: items.filter((item) => String(item && item.sportTitle ? item.sportTitle : item && item.sportKey ? item.sportKey : '') === selectedSport);
-	const visibleItems = scopedItems.filter((item) => {
+	const visibleItems = filterRecentPickWindow(scopedItems).filter((item) => {
 		const row = item && item.row ? item.row : {};
 		if (isLiveEventRow(row)) { return false; }
 		const itemTs = getEventStartTimestamp(item);
@@ -4117,7 +4120,9 @@ function renderRecentResultsForSelectedScope(scopeLabel, items) {
 			: '';
 		const expandHint = insightsPanel ? '<p class="card-expand-hint">Tap card for matchup insights</p>' : '';
 		const cardExpandAttrs = insightsPanel ? ' data-expand-card="true" role="button" tabindex="0" aria-expanded="false"' : '';
-			const oddsBadge = hasPrediction ? '<span class="odds-pill" title="Pre-game odds at kickoff">Odds: ' + escapeHtml(predictionOdds || 'N/A') + '</span>' : '';
+		const oddsAndScoreBadge = hasPrediction
+			? '<span class="odds-pill" title="Pre-game odds and final score">Odds: ' + escapeHtml(predictionOdds || 'N/A') + ' | Score: ' + escapeHtml(scoreText || 'N/A') + '</span>'
+			: '';
 		const confidenceBadge = prediction && prediction.confidence
 			? '<span class="meta-pill ' + confidenceTierClass + '">Conf: ' + escapeHtml(confidenceText) + '</span>'
 			: '';
@@ -4146,10 +4151,9 @@ function renderRecentResultsForSelectedScope(scopeLabel, items) {
 			+ '<div class="prediction-stack">'
 			+ '<div class="prediction-row">'
 			+ '<p class="bet-name">' + escapeHtml(betName) + '</p>'
-			+ oddsBadge
+			+ oddsAndScoreBadge
 			+ '</div>'
 			+ '<div class="game-meta compact right-aligned">'
-			+ '<span class="meta-pill">Score: ' + escapeHtml(scoreText) + '</span>'
 			+ winBadge
 			+ edgeBadge
 			+ evBadge
@@ -4197,8 +4201,11 @@ function renderRecentResultsForSelectedScope(scopeLabel, items) {
 async function loadRecentResultsForSelectedScope(apiKey, options = {}) {
 	const loadCost = 1;
 	const forceRefresh = Boolean(options && options.forceRefresh === true);
+	const preserveVisibleResults = state.view === 'recent' && Array.isArray(state.allRecentResultsItems) && state.allRecentResultsItems.length > 0;
 	const loadToken = beginTrackedLoading(0);
-	beginBusyOverlay();
+	if (!preserveVisibleResults) {
+		beginBusyOverlay();
+	}
 	state.rangeLoading = true;
 	syncRangeButtons();
 	setView("recent");
@@ -4213,7 +4220,9 @@ async function loadRecentResultsForSelectedScope(apiKey, options = {}) {
 	const recentLookbackDays = Number(state.recentResultsLookbackDays) || RECENT_RESULTS_LOOKBACK_DAYS;
 	const loadingStampCost = Math.max(3, Math.max(1, (Array.isArray(state.sportsRows) && state.sportsRows.length) ? state.sportsRows.length : 1) * 3);
 	setStatus('Loading recent results for ' + scopeLabel.toLowerCase() + '...', '');
-	el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p><div class="loading-panel"><p class="loading-label">Connecting to odds API…</p><div class="loading-bar"><span></span></div></div>';
+	if (!preserveVisibleResults) {
+		el.upcomingWrap.innerHTML = '<p class="subhead">Recent Results | ' + escapeHtml(scopeLabel) + '</p><div class="loading-panel"><p class="loading-label">Connecting to odds API…</p><div class="loading-bar"><span></span></div></div>';
+	}
 	setLoadingMessage('Fetching scores for ' + escapeHtml(scopeLabel) + '…');
 
 	try {
@@ -4419,6 +4428,11 @@ async function loadRecentResultsForSelectedScope(apiKey, options = {}) {
 			return;
 		}
 		const message = error instanceof Error ? error.message : 'Unknown error';
+		if (preserveVisibleResults) {
+			rerenderActiveResultsView();
+			setStatus('Could not load additional recent results: ' + message + '. Showing the current results.', 'error');
+			return;
+		}
 		state.allRecentResultsItems = [];
 		state.recentScopeLabel = scopeLabel;
 		setResultSportOptions([]);
@@ -4428,7 +4442,9 @@ async function loadRecentResultsForSelectedScope(apiKey, options = {}) {
 		if (isTrackedLoadingCurrent(loadToken)) {
 			state.rangeLoading = false;
 			syncRangeButtons();
-			endBusyOverlay();
+				if (!preserveVisibleResults) {
+					endBusyOverlay();
+				}
 		}
 	}
 }
