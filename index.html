@@ -13,8 +13,8 @@
     <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" referrerpolicy="no-referrer"></noscript>
     
     <link rel="stylesheet" href="css/base.css?v=20260903"> 
-    <link rel="stylesheet" href="css/layout.css?v=20260903">
-    <link rel="stylesheet" href="css/components.css?v=20260903">
+    <link rel="stylesheet" href="css/layout.css?v=20260925">
+    <link rel="stylesheet" href="css/components.css?v=20260924">
     <link rel="stylesheet" href="css/tour.css?v=20260903">
     <link rel="stylesheet" href="css/dashboard.css?v=20260903">
 
@@ -60,6 +60,14 @@
             <span class="shortcut-keycap">I</span>
             <span class="shortcut-help">Info</span>
         </button>
+        <span class="shortcut-bar-divider" aria-hidden="true">|</span>
+        <div class="shortcut-utility-actions" aria-label="Application controls">
+            <button id="refreshFeedBtn" type="button" class="settings-btn icon-only refresh-feed-btn" aria-label="Refresh feed"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
+            <button id="searchToggleBtn" type="button" class="settings-btn search-toggle-btn icon-only" aria-label="Open search bar" aria-pressed="false"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i></button>
+            <button id="colorPickerBtn" type="button" class="settings-btn icon-only" aria-label="Theme colour"><i class="fa-solid fa-palette" aria-hidden="true"></i></button>
+            <button id="settingsBtn" type="button" class="settings-btn icon-only" aria-haspopup="dialog" aria-controls="apiKeyModal" aria-label="Settings"><i class="fa-solid fa-gear" aria-hidden="true"></i></button>
+            <button id="authStatusBtn" type="button" class="settings-btn icon-only auth-status-btn hidden" aria-label="Sign out"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i></button>
+        </div>
     </div>
 
     <div id="apiKeyModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="apiKeyModalTitle">
@@ -172,17 +180,12 @@
                 <div class="panel-head">
                     <div class="panel-head-row">
                         <button id="backBtn" type="button" class="hidden icon-only" aria-label="Sports catalog"><i class="fa-solid fa-futbol" aria-hidden="true"></i></button>
-                        <button id="refreshFeedBtn" type="button" class="settings-btn icon-only refresh-feed-btn" aria-label="Refresh feed" title="Refresh feed"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
                         <div class="panel-head-copy">
                             <h1 id="pageTitle" class="title">Sports Catalog</h1>
                             <p id="panelSub" class="panel-sub">BetKeing &mdash; Live Odds &amp; Predictions</p>
                         </div>
                         <div class="panel-head-tools is-collapsed">
                             <input id="sportsSearchInput" class="sports-search-input" type="search" placeholder="Search sports by key, title or group" aria-label="Search sports catalog" disabled tabindex="-1">
-                            <button id="searchToggleBtn" type="button" class="settings-btn search-toggle-btn icon-only has-tooltip" aria-label="Open search bar" aria-pressed="false" title="Search" data-tooltip="Search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i></button>
-                            <button id="colorPickerBtn" type="button" class="settings-btn icon-only has-tooltip" aria-label="Theme colour" title="Theme colour" data-tooltip="Theme colour"><i class="fa-solid fa-palette" aria-hidden="true"></i></button>
-                            <button id="settingsBtn" type="button" class="settings-btn icon-only has-tooltip" aria-haspopup="dialog" aria-controls="apiKeyModal" aria-label="Settings" title="Settings" data-tooltip="Settings"><i class="fa-solid fa-gear" aria-hidden="true"></i></button>
-                            <button id="authStatusBtn" type="button" class="settings-btn icon-only auth-status-btn hidden has-tooltip" aria-label="Sign out" title="Sign out" data-tooltip="Sign out"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i></button>
                         </div>
                     </div>
                 </div>
@@ -253,14 +256,14 @@
         </div>
     </div>
 
-    <script src="js/runtime.js?v=20260904"></script>
-    <script src="js/config.js?v=20260907"></script>
+    <script src="js/runtime.js?v=20260931"></script>
+    <script src="js/config.js?v=20260928"></script>
     <script src="js/network.js?v=20260903"></script>
     <script src="js/cache.js?v=20260903"></script>
     <script src="js/catalog.js?v=20260903"></script>
-    <script src="js/upcoming.js?v=20260917"></script>
-    <script src="js/dashboard.js?v=20260916"></script>
+    <script src="js/upcoming.js?v=20260931"></script>
+    <script src="js/dashboard.js?v=20260929"></script>
     <script src="js/theme.js?v=20260903"></script>
-    <script src="js/app.js?v=20260903"></script>
+    <script src="js/app.js?v=20260925"></script>
 </body>
 </html>

@@ -2614,37 +2614,6 @@ button:hover,
   z-index: 9993;
 }
 
-/* Panel-head icon button tooltips */
-.has-tooltip {
-  position: relative;
-  overflow: visible;
-}
-
-.has-tooltip::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  white-space: nowrap;
-  padding: 5px 9px;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(14, 22, 34, 0.96);
-  color: #e6f0fc;
-  font-size: 0.7rem;
-  letter-spacing: 0.04em;
-  font-weight: 600;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.14s;
-  z-index: 200;
-}
-
-.has-tooltip:hover::after {
-  opacity: 1;
-}
-
 /* #apiKeyModal .modal-card select is styled in the dark-themed section below */
 
 /* Colour picker modal */

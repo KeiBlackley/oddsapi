@@ -33,6 +33,8 @@ const PREGAME_PREDICTION_STORE_KEY = "keieye_pregame_predictions_v1";
 const PREGAME_PREDICTION_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const BACKTEST_HISTORY_KEY = "keieye_backtest_history_v1";
 const BACKTEST_TREND_WINDOW_KEY = "keieye_backtest_trend_window_v1";
+const VALIDATED_TRAINING_DATA_KEY = "keieye_validated_training_data_v1";
+const VALIDATED_TRAINING_RETENTION_MS = 730 * 24 * 60 * 60 * 1000;
 const NEXTTEST_HISTORY_KEY = "keieye_nexttest_history_v1";
 const EV_TOOLTIP_TEXT = "Compares our probability against the live market odds. If your model says a team has a 60% chance to win, but the bookmaker's odds imply only a 50% chance, you have found +EV (Positive Expected Value).";
 

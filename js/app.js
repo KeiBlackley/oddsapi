@@ -178,7 +178,6 @@ function init() {
 	if (el.authStatusBtn) {
 		const icon = el.authStatusBtn.querySelector('i');
 		if (icon instanceof HTMLElement) { icon.className = 'fa-solid fa-right-from-bracket'; }
-		el.authStatusBtn.title = 'Sign out';
 		el.authStatusBtn.setAttribute('aria-label', 'Sign out');
 		el.authStatusBtn.addEventListener('click', () => {
 			flashShortcutContainer('escape');
@@ -628,6 +627,9 @@ function init() {
 	const shortcutBar = document.getElementById('desktopShortcutBar');
 	if (shortcutBar) {
 		const syncShortcutOverflowState = () => {
+			shortcutBar.classList.remove('is-compact');
+			const needsCompactMode = shortcutBar.scrollWidth > (shortcutBar.clientWidth + 2);
+			shortcutBar.classList.toggle('is-compact', needsCompactMode);
 			const maxScrollLeft = Math.max(0, shortcutBar.scrollWidth - shortcutBar.clientWidth);
 			const scrollLeft = Math.max(0, shortcutBar.scrollLeft || 0);
 			const hasOverflow = maxScrollLeft > 2;

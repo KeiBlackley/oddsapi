@@ -247,7 +247,6 @@ function syncSearchInputMode() {
 	if (el.searchToggleBtn) {
 		el.searchToggleBtn.classList.remove('hidden');
 		el.searchToggleBtn.setAttribute('aria-pressed', isCollapsed ? 'false' : 'true');
-		el.searchToggleBtn.title = isCollapsed ? 'Open search bar' : 'Close search bar';
 		el.searchToggleBtn.setAttribute('aria-label', isCollapsed ? 'Open search bar' : 'Close search bar');
 	}
 	el.sportsSearchInput.disabled = isCollapsed;
@@ -1315,8 +1314,11 @@ function persistRefreshViewState() {
 		searchBarExpanded: Boolean(state.searchBarExpanded),
 		secureMode: state.secureMode === true,
 		recentResultsLookbackDays: Number.isFinite(Number(state.recentResultsLookbackDays))
-			? Math.max(1, Math.min(14, Math.round(Number(state.recentResultsLookbackDays))))
-			: 2,
+			? Math.max(1, Math.min(ROLLING_HISTORY_MAX_AGE_DAYS, Math.round(Number(state.recentResultsLookbackDays))))
+			: 1,
+		upcomingBePickLimit: Number.isFinite(Number(state.upcomingBePickLimit)) && Number(state.upcomingBePickLimit) >= 0
+			? Math.min(8760, Math.round(Number(state.upcomingBePickLimit)))
+			: DEFAULT_UPCOMING_CARD_WINDOW_HOURS,
 		upcomingSavedSportsShowTomorrow: state.upcomingSavedSportsShowTomorrow === true,
 		upcomingSavedSportsShowDayAfter: state.upcomingSavedSportsShowDayAfter === true,
 		exampleStake: Number.isFinite(Number(state.exampleStake)) && Number(state.exampleStake) >= 0
@@ -1365,8 +1367,11 @@ function applyRefreshViewState(snapshot) {
 	state.upcomingSavedSportsShowTomorrow = snapshot.upcomingSavedSportsShowTomorrow === true;
 	state.upcomingSavedSportsShowDayAfter = snapshot.upcomingSavedSportsShowDayAfter === true;
 	state.recentResultsLookbackDays = Number.isFinite(Number(snapshot.recentResultsLookbackDays))
-		? Math.max(1, Math.min(14, Math.round(Number(snapshot.recentResultsLookbackDays))))
+		? Math.max(1, Math.min(ROLLING_HISTORY_MAX_AGE_DAYS, Math.round(Number(snapshot.recentResultsLookbackDays))))
 		: state.recentResultsLookbackDays;
+	state.upcomingBePickLimit = Number.isFinite(Number(snapshot.upcomingBePickLimit)) && Number(snapshot.upcomingBePickLimit) >= 0
+		? Math.min(8760, Math.round(Number(snapshot.upcomingBePickLimit)))
+		: state.upcomingBePickLimit;
 	state.exampleStake = Number.isFinite(Number(snapshot.exampleStake)) && Number(snapshot.exampleStake) >= 0
 		? Number(snapshot.exampleStake)
 		: state.exampleStake;
@@ -1843,7 +1848,18 @@ function setRangeSelection(rangeKey) {
 	if (!state.rangeButtonsEnabled || state.rangeLoading) {
 		return;
 	}
+	if (normalizedRange === 'today') {
+		state.upcomingBePickLimit = DEFAULT_UPCOMING_CARD_WINDOW_HOURS;
+		state.upcomingSavedSportsShowTomorrow = false;
+		state.upcomingSavedSportsShowDayAfter = false;
+		if (state.activeUpcomingSportData) {
+			state.activeUpcomingSportData.showTomorrow = false;
+		}
+	}
 	if (state.timeRangeSelected && state.timeRange === normalizedRange) {
+		if (normalizedRange === 'today') {
+			rerenderActiveResultsView();
+		}
 		return;
 	}
 	if (!state.apiKey) {

@@ -34,7 +34,8 @@ if (!Number.isFinite(lp) || lp <= 0) { continue; }
 const oddsRaw = item.predictionOdds
 || getBookmakerOddsForPrediction(item.row, item.oddsRow, item.prediction);
 const parsedOdds = Number(oddsRaw);
-const odds = Number.isFinite(parsedOdds) && parsedOdds > 1 ? parsedOdds : 2;
+if (!Number.isFinite(parsedOdds) || parsedOdds <= 1) { continue; }
+const odds = parsedOdds;
 const result = isRecent
   ? getPredictionResultForCompletedEvent(item.row, item.prediction.predictedTeam).label
   : '';
@@ -194,12 +195,16 @@ state.upcomingBePickLimit = Number.isFinite(val) && val >= 0 ? val : 0;
 if (state.view === 'recent') {
   state.recentResultsLookbackDays = val > 0
     ? Math.max(1, Math.ceil(val / 24))
-    : MAX_RECENT_RESULTS_LOOKBACK_DAYS;
+    : ROLLING_HISTORY_MAX_AGE_DAYS;
   rerenderActiveResultsView();
+  const shouldRefreshRecentScores = state.recentResultsLookbackDays <= HISTORY_LOOKBACK_DAYS;
+  if (!shouldRefreshRecentScores && renderRecentResultsFromRollingCache()) {
+    return;
+  }
   if (state.activeSportKey) {
-    loadRecentResultsForSport(state.activeSportKey, state.apiKey, { forceRefresh: true });
+    loadRecentResultsForSport(state.activeSportKey, state.apiKey, { forceRefresh: shouldRefreshRecentScores });
   } else {
-    loadRecentResultsForSelectedScope(state.apiKey, { forceRefresh: true });
+    loadRecentResultsForSelectedScope(state.apiKey, { forceRefresh: shouldRefreshRecentScores });
   }
   return;
 }
