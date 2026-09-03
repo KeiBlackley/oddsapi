@@ -1,26 +1,4 @@
-// --- App state, storage keys and shared browser state ---
-const STORAGE_KEY = "keieye_home_api_key_v1";
-const LEGACY_STORAGE_KEY = "keieye_betting_api_keys";
-const SAVED_API_KEYS_KEY = "keieye_saved_api_keys_v1";
-const SECURE_MODE_KEY = "keieye_secure_mode_v1";
-const SAVED_SPORTS_KEY = "keieye_saved_sports_v1";
-const SAVED_SPORTS_BACKUP_KEY = "keieye_saved_sports_backup_v1";
-const SAVED_SPORTS_SESSION_KEY = "keieye_saved_sports_session_v1";
-const BASE_URL = "https://api.the-odds-api.com/v4";
-const CACHE_VERSION = "v1";
-const GAME_START_BUFFER_MS = 60 * 1000;
-const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 365;
-const REFRESH_BEFORE_NEXT_GAME_MS = 10 * 60 * 1000;
-const MIN_VISIBLE_WIN_RATE = 50;
-const RANGE_SELECTION_KEY = "keieye_selected_range_v1";
-const LAST_DATA_LOAD_KEY = "keieye_last_data_load_v1";
-const GAME_FILTERS_KEY = "keieye_game_filters_v1";
-const REFRESH_VIEW_STATE_KEY = "keieye_refresh_view_state_v1";
-const NETWORK_TIMEOUT_MS = 25000;
-const MAX_SEARCH_INPUT_LENGTH = 120;
-const MAX_API_KEY_LENGTH = 256;
-const MAX_SAVED_API_KEYS = 20;
-
+// --- App state, UI coordination and persisted view state ---
 const el = {
 	infoBtn: document.getElementById("infoBtn"),
 	settingsBtn: document.getElementById("settingsBtn"),
@@ -57,7 +35,6 @@ const el = {
 	globalLoadingOverlay: document.getElementById("globalLoadingOverlay"),
 	tableWrap: document.getElementById("tableWrap"),
 	upcomingWrap: document.getElementById("upcomingWrap"),
-	dashboardWrap: document.getElementById("dashboardWrap"),
 	sportFilterBar: document.getElementById("sportFilterBar"),
 	sportFilterButtons: document.getElementById("sportFilterButtons")
 };
@@ -85,9 +62,10 @@ const state = {
 	favoriteUpcomingSportTitles: [],
 	upcomingVisibleSportCount: 5,
 	upcomingSavedSportsShowTomorrow: false,
+	upcomingSavedSportsShowDayAfter: false,
 	allRecentResultsItems: [],
 	recentScopeLabel: '',
-	recentResultsLookbackDays: 2,
+	recentResultsLookbackDays: 1,
 	backtestTrendWindow: 5,
 	resultSportOptions: [],
 	resultSportFilter: 'all',
@@ -117,6 +95,7 @@ const state = {
 	settingsModalCloseTimerId: null,
 	statusHideTimerId: null,
 	busyOverlayCount: 0,
+	upcomingBePickLimit: 24,
 	isInitialHydration: false
 };
 
@@ -182,14 +161,13 @@ function normalizeApiKeyInput(value) {
 }
 
 function readSecureModeSetting() {
+	// Secure mode is always enforced in this application.
 	return true;
 }
 
-function persistSecureModeSetting(enabled) {
-	const nextValue = true;
-	state.secureMode = true;
+function persistSecureModeSetting() {
 	try {
-		localStorage.setItem(SECURE_MODE_KEY, nextValue ? '1' : '0');
+		localStorage.setItem(SECURE_MODE_KEY, '1');
 	} catch {
 		// Ignore storage failures for secure mode preference.
 	}
@@ -229,15 +207,18 @@ function syncSecureModeButton() {
 }
 
 function setSecureMode(enabled) {
-	if (state.secureMode === true) {
+	const shouldEnable = Boolean(enabled);
+	if (state.secureMode === shouldEnable) {
 		syncSecureModeButton();
 		syncApiKeyModalMode();
 		persistRefreshViewState();
 		return;
 	}
-	persistSecureModeSetting(true);
-	applySecureModeStoragePolicy();
-	setStatus('Secure mode enabled. API key now uses session-only storage.', 'ok');
+	persistSecureModeSetting();
+	if (shouldEnable) {
+		applySecureModeStoragePolicy();
+		setStatus('Secure mode enabled. API key now uses session-only storage.', 'ok');
+	}
 	syncSavedApiKeySelect();
 	syncSecureModeButton();
 	syncApiKeyModalMode();
@@ -246,74 +227,6 @@ function setSecureMode(enabled) {
 
 function toggleSecureMode() {
 	setSecureMode(!(state.secureMode === true));
-}
-
-async function fetchWithTimeout(url, timeoutMs = NETWORK_TIMEOUT_MS) {
-	const controller = new AbortController();
-	const timeout = window.setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || NETWORK_TIMEOUT_MS));
-	try {
-		return await fetch(url, { signal: controller.signal });
-	} catch (error) {
-		if (error && error.name === 'AbortError') {
-			throw new Error('Request timed out.');
-		}
-		throw error;
-	} finally {
-		window.clearTimeout(timeout);
-	}
-}
-
-async function safeReadJson(response, fallbackValue = null) {
-	if (!response) {
-		return fallbackValue;
-	}
-	try {
-		return await response.json();
-	} catch {
-		return fallbackValue;
-	}
-}
-
-function parseHeaderInteger(value) {
-	const raw = String(value || '').trim();
-	if (!raw) {
-		return NaN;
-	}
-	const match = raw.match(/-?\d+/);
-	if (!match) {
-		return NaN;
-	}
-	const parsed = Number(match[0]);
-	return Number.isFinite(parsed) ? parsed : NaN;
-}
-
-function getApiCreditsUsedFromResponse(response) {
-	if (!response || !response.headers || typeof response.headers.get !== 'function') {
-		return 0;
-	}
-	const lastHeader = response.headers.get('x-requests-last');
-	const parsedLast = parseHeaderInteger(lastHeader);
-	if (Number.isFinite(parsedLast) && parsedLast >= 0) {
-		return parsedLast;
-	}
-
-	const usedHeader = response.headers.get('x-requests-used');
-	const parsedUsed = parseHeaderInteger(usedHeader);
-	if (Number.isFinite(parsedUsed) && parsedUsed >= 0 && parsedUsed <= 10) {
-		return parsedUsed;
-	}
-	return 0;
-}
-
-function getApiCreditsUsedFromResponses(responses) {
-	if (!Array.isArray(responses) || !responses.length) {
-		return 0;
-	}
-	let total = 0;
-	for (const response of responses) {
-		total += getApiCreditsUsedFromResponse(response);
-	}
-	return Math.max(0, Math.trunc(total));
 }
 
 function syncSearchInputMode() {
@@ -330,13 +243,13 @@ function syncSearchInputMode() {
 	if (panelTools) {
 		panelTools.classList.toggle('is-collapsed', state.searchBarExpanded === false);
 	}
+	const isCollapsed = state.searchBarExpanded === false;
 	if (el.searchToggleBtn) {
-		const isCollapsed = state.searchBarExpanded === false;
+		el.searchToggleBtn.classList.remove('hidden');
 		el.searchToggleBtn.setAttribute('aria-pressed', isCollapsed ? 'false' : 'true');
 		el.searchToggleBtn.title = isCollapsed ? 'Open search bar' : 'Close search bar';
 		el.searchToggleBtn.setAttribute('aria-label', isCollapsed ? 'Open search bar' : 'Close search bar');
 	}
-	const isCollapsed = state.searchBarExpanded === false;
 	el.sportsSearchInput.disabled = isCollapsed;
 	el.sportsSearchInput.setAttribute('tabindex', isCollapsed ? '-1' : '0');
 }
@@ -632,6 +545,7 @@ function syncApiKeyModalMode() {
 	}
 	syncSecureModeButton();
 	syncApiKeySubmitButtonState();
+	syncSearchInputMode();
 }
 
 function syncSettingsModalPageShiftState() {
@@ -989,146 +903,6 @@ function loadSavedSports() {
 	}
 }
 
-function getCacheKey(name) {
-	return "keieye_cache_" + CACHE_VERSION + "_" + name;
-}
-
-function writeCache(name, data) {
-	try {
-		const timestamp = Date.now();
-		localStorage.setItem(getCacheKey(name), JSON.stringify({
-			ts: timestamp,
-			data
-		}));
-		return timestamp;
-	} catch {
-		// Ignore storage cache failures.
-		return Date.now();
-	}
-}
-
-function readCache(name) {
-	const entry = readCacheEntry(name);
-	return entry ? entry.data : null;
-}
-
-function readCacheEntry(name) {
-	try {
-		const raw = localStorage.getItem(getCacheKey(name));
-		if (!raw) {
-			return null;
-		}
-		const parsed = JSON.parse(raw);
-		if (!parsed || typeof parsed !== "object" || !("ts" in parsed)) {
-			return null;
-		}
-		if (typeof parsed.ts !== "number" || !Number.isFinite(parsed.ts)) {
-			return null;
-		}
-		if ((Date.now() - parsed.ts) > CACHE_TTL_MS) {
-			return null;
-		}
-		return parsed;
-	} catch {
-		return null;
-	}
-}
-
-function readCacheTimestamp(name) {
-	const entry = readCacheEntry(name);
-	return entry && Number.isFinite(Number(entry.ts)) ? Number(entry.ts) : NaN;
-}
-
-function clearRollingHistoryCache(sportKey = "") {
-	const normalizedKey = String(sportKey || "").trim();
-	const targets = normalizedKey
-		? [
-			"rolling_history_" + normalizedKey,
-			"upcoming_history_" + normalizedKey,
-			"recent_history_" + normalizedKey
-		]
-		: [];
-
-	try {
-		if (targets.length) {
-			for (const name of targets) {
-				localStorage.removeItem(getCacheKey(name));
-			}
-			return;
-		}
-
-		const cachePrefix = "keieye_cache_" + CACHE_VERSION + "_";
-		const historyNamePrefixList = ["rolling_history_", "upcoming_history_", "recent_history_"];
-		const keysToRemove = [];
-		for (let i = 0; i < localStorage.length; i += 1) {
-			const key = localStorage.key(i);
-			if (!key || !key.startsWith(cachePrefix)) {
-				continue;
-			}
-			const cacheName = key.slice(cachePrefix.length);
-			if (historyNamePrefixList.some((prefix) => cacheName.startsWith(prefix))) {
-				keysToRemove.push(key);
-			}
-		}
-		for (const key of keysToRemove) {
-			localStorage.removeItem(key);
-		}
-	} catch {
-		// Ignore cache clear failures.
-	}
-}
-
-function buildOddsByEventId(oddsRows) {
-	const oddsByEventId = {};
-	if (!Array.isArray(oddsRows)) {
-		return oddsByEventId;
-	}
-	for (const row of oddsRows) {
-		if (row && row.id) {
-			oddsByEventId[String(row.id)] = row;
-		}
-	}
-	return oddsByEventId;
-}
-
-function getEventStartTimestamp(eventRow) {
-	if (!eventRow || typeof eventRow !== 'object') {
-		return NaN;
-	}
-	const raw = eventRow.commence_time || eventRow.start || eventRow.start_time || '';
-	if (!raw) {
-		return NaN;
-	}
-	const ts = new Date(String(raw)).getTime();
-	return Number.isFinite(ts) ? ts : NaN;
-}
-
-function getNextGameStartTimestamp(eventRows) {
-	if (!Array.isArray(eventRows) || !eventRows.length) {
-		return NaN;
-	}
-	const now = Date.now();
-	let nextTs = NaN;
-	for (const row of eventRows) {
-		const ts = getEventStartTimestamp(row);
-		if (!Number.isFinite(ts) || ts <= now) {
-			continue;
-		}
-		if (!Number.isFinite(nextTs) || ts < nextTs) {
-			nextTs = ts;
-		}
-	}
-	return nextTs;
-}
-
-function shouldRefreshCachedEvents(eventRows) {
-	const nextStartTs = getNextGameStartTimestamp(eventRows);
-	if (!Number.isFinite(nextStartTs)) {
-		return false;
-	}
-	return Date.now() >= (nextStartTs - REFRESH_BEFORE_NEXT_GAME_MS);
-}
-
 function persistSavedSports() {
 	const normalized = Array.from(new Set((Array.isArray(state.savedSports) ? state.savedSports : [])
 		.map((key) => normalizeSportKey(key))
@@ -1235,6 +1009,25 @@ function toggleSavedSport(sportKey) {
 	}, 1100);
 }
 
+function syncShortcutBarState() {
+	const bar = document.getElementById('desktopShortcutBar');
+	if (!bar) { return; }
+	bar.querySelectorAll('.shortcut-chip.is-current').forEach(function(c) { c.classList.remove('is-current'); });
+	const scopeKey = state.catalogScope === 'favorites' ? 'F' : 'A';
+	const scopeChip = bar.querySelector('[data-shortcut-key="' + scopeKey + '"]');
+	if (scopeChip) { scopeChip.classList.add('is-current'); }
+	if (state.view === 'recent' || (state.timeRangeSelected && state.timeRange === 'pastWeek')) {
+		const chip = bar.querySelector('[data-shortcut-key="R"]');
+		if (chip) { chip.classList.add('is-current'); }
+	} else if (state.timeRangeSelected && normalizeRangeKey(state.timeRange) === 'live') {
+		const chip = bar.querySelector('[data-shortcut-key="L"]');
+		if (chip) { chip.classList.add('is-current'); }
+	} else if (state.timeRangeSelected && normalizeRangeKey(state.timeRange) === 'today') {
+		const chip = bar.querySelector('[data-shortcut-key="U"]');
+		if (chip) { chip.classList.add('is-current'); }
+	}
+}
+
 function syncRangeButtons() {
 	const rangeIconByKey = {
 		pastWeek: 'fa-clock-rotate-left',
@@ -1257,6 +1050,7 @@ function syncRangeButtons() {
 		button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
 		button.disabled = !state.rangeButtonsEnabled || state.rangeLoading;
 	});
+	syncShortcutBarState();
 }
 
 function getPredictionWinRateValue(prediction) {
@@ -1330,6 +1124,10 @@ function syncCatalogScopeButtons() {
 
 	// Sync the panel-head scope toggle pill.
 	syncBackButtonMode();
+	syncShortcutBarState();
+	if (el.tableWrap) {
+		el.tableWrap.classList.toggle('scope-favorites', state.catalogScope === 'favorites');
+	}
 }
 
 function getLoadedSportsCount() {
@@ -1402,30 +1200,24 @@ function setCatalogScope(scopeKey) {
 function setView(viewName) {
 	if (viewName === "upcoming" || viewName === "recent") {
 		state.view = viewName;
-	} else if (viewName === "dashboard") {
-		state.view = "dashboard";
 	} else {
 		state.view = "catalog";
 	}
-	const isDashboard = state.view === "dashboard";
 	const isDetailView = state.view === "upcoming" || state.view === "recent";
 	if (state.view === "upcoming") {
 		el.pageTitle.textContent = getGamesSectionTitle(state.timeRange);
 	} else if (state.view === "recent") {
 		el.pageTitle.textContent = "Recent Results";
-	} else if (isDashboard) {
-		el.pageTitle.textContent = "Dashboard";
 	} else {
 		el.pageTitle.textContent = state.catalogScope === 'favorites' ? 'Favourites Catalog' : 'Sports Catalog';
 	}
 	syncBackButtonMode();
-	el.tableWrap.classList.toggle("hidden", isDetailView || isDashboard);
+	if (el.refreshFeedBtn) { el.refreshFeedBtn.classList.remove('hidden'); }
+	if (el.searchToggleBtn) { el.searchToggleBtn.classList.remove('hidden'); }
+	el.tableWrap.classList.toggle("hidden", isDetailView);
 	el.upcomingWrap.classList.toggle("hidden", !isDetailView);
-	if (el.dashboardWrap) {
-		el.dashboardWrap.classList.toggle("hidden", !isDashboard);
-	}
 	state.rangeButtonsEnabled = true;
-	if (!isDetailView && !isDashboard) {
+	if (!isDetailView) {
 		state.timeRangeSelected = false;
 		state.timeRange = 'today';
 		state.resultSportFilter = 'all';
@@ -1434,6 +1226,7 @@ function setView(viewName) {
 	syncRangeButtons();
 	syncResultSportFilterBar();
 	syncSearchInputMode();
+	syncShortcutBarState();
 	persistRefreshViewState();
 }
 
@@ -1522,9 +1315,10 @@ function persistRefreshViewState() {
 		searchBarExpanded: Boolean(state.searchBarExpanded),
 		secureMode: state.secureMode === true,
 		recentResultsLookbackDays: Number.isFinite(Number(state.recentResultsLookbackDays))
-			? Math.max(2, Math.min(14, Math.round(Number(state.recentResultsLookbackDays))))
+			? Math.max(1, Math.min(14, Math.round(Number(state.recentResultsLookbackDays))))
 			: 2,
 		upcomingSavedSportsShowTomorrow: state.upcomingSavedSportsShowTomorrow === true,
+		upcomingSavedSportsShowDayAfter: state.upcomingSavedSportsShowDayAfter === true,
 		exampleStake: Number.isFinite(Number(state.exampleStake)) && Number(state.exampleStake) >= 0
 			? Number(state.exampleStake)
 			: 100,
@@ -1569,8 +1363,9 @@ function applyRefreshViewState(snapshot) {
 	state.searchBarExpanded = snapshot.searchBarExpanded === true;
 	state.secureMode = true;
 	state.upcomingSavedSportsShowTomorrow = snapshot.upcomingSavedSportsShowTomorrow === true;
+	state.upcomingSavedSportsShowDayAfter = snapshot.upcomingSavedSportsShowDayAfter === true;
 	state.recentResultsLookbackDays = Number.isFinite(Number(snapshot.recentResultsLookbackDays))
-		? Math.max(2, Math.min(14, Math.round(Number(snapshot.recentResultsLookbackDays))))
+		? Math.max(1, Math.min(14, Math.round(Number(snapshot.recentResultsLookbackDays))))
 		: state.recentResultsLookbackDays;
 	state.exampleStake = Number.isFinite(Number(snapshot.exampleStake)) && Number(snapshot.exampleStake) >= 0
 		? Number(snapshot.exampleStake)
@@ -1725,7 +1520,8 @@ function getRangeWindow(rangeKey) {
 	if (normalizedRange === "pastWeek") {
 		return { start: startOfPastWindow, end: endOfPastWindow };
 	}
-	return { start: startOfToday, end: endOfToday };
+	const end24h = new Date(now.getTime() + (24 * 60 * 60 * 1000));
+	return { start: startOfToday, end: end24h };
 }
 
 function getRowTimestamp(row) {
@@ -1908,6 +1704,7 @@ function openApiKeyModal() {
 	el.apiKeyModal.style.display = 'flex';
 	el.apiKeyModal.classList.remove('is-closing');
 	el.apiKeyModal.classList.add("is-open");
+	el.apiKeyModal.classList.remove('simplified');
 	syncSettingsModalPageShiftState();
 	if (isLoginMode() && el.apiKeyInput) {
 		window.setTimeout(() => el.apiKeyInput.focus(), 40);
@@ -2055,7 +1852,8 @@ function setRangeSelection(rangeKey) {
 			state.timeRangeSelected = true;
 			saveRangeSelection(normalizedRange);
 			if (normalizedRange === 'pastWeek') {
-				state.recentResultsLookbackDays = 2;
+				state.recentResultsLookbackDays = 1;
+				state.upcomingBePickLimit = 24;
 				if (state.activeSportKey) {
 					loadRecentResultsForSport(state.activeSportKey, '');
 					persistRefreshViewState();
@@ -2083,7 +1881,8 @@ function setRangeSelection(rangeKey) {
 	state.timeRangeSelected = true;
 	saveRangeSelection(normalizedRange);
 	if (normalizedRange === 'pastWeek') {
-		state.recentResultsLookbackDays = 2;
+		state.recentResultsLookbackDays = 1;
+		state.upcomingBePickLimit = 24;
 		if (state.activeSportKey) {
 			loadRecentResultsForSport(state.activeSportKey, state.apiKey);
 			persistRefreshViewState();
@@ -2137,7 +1936,11 @@ async function preloadAllRangeViews(apiKey) {
 					const eventsUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/events/?apiKey=' + encodeURIComponent(apiKey) + '&dateFormat=iso';
 					const oddsUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/odds/?apiKey=' + encodeURIComponent(apiKey) + '&bookmakers=sportsbet&regions=au,us,uk,eu&markets=h2h&oddsFormat=decimal&dateFormat=iso';
 					const historyUrl = BASE_URL + '/sports/' + encodeURIComponent(sportKey) + '/scores/?apiKey=' + encodeURIComponent(apiKey) + '&daysFrom=' + HISTORY_LOOKBACK_DAYS + '&dateFormat=iso';
-					const [eventResponse, oddsResponse, historyResponse] = await Promise.all([fetch(eventsUrl), fetch(oddsUrl), fetch(historyUrl)]);
+					const [eventResponse, oddsResponse, historyResponse] = await Promise.all([
+						fetchWithTimeout(eventsUrl),
+						fetchWithTimeout(oddsUrl),
+						fetchWithTimeout(historyUrl)
+					]);
 					const eventPayload = eventResponse.ok ? await eventResponse.json() : [];
 					const oddsPayload = oddsResponse.ok ? await oddsResponse.json() : [];
 					const historyPayload = historyResponse.ok ? await historyResponse.json() : [];

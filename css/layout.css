@@ -81,9 +81,10 @@
 }
 
 .panel-head-tools.is-collapsed {
-  flex-basis: 146px;
-  min-width: 146px;
-  max-width: 146px;
+  flex-basis: 196px;
+  min-width: 196px;
+  max-width: 196px;
+  overflow: visible;
 }
 
 #backBtn {
@@ -116,6 +117,7 @@
 
 .search-toggle-btn {
   flex: 0 0 auto;
+  display: inline-flex !important;
   min-width: 42px;
   width: 42px;
   height: 42px;
@@ -346,6 +348,40 @@
   color: #111111;
 }
 
+/* Persistent current-state: accent color for scope/range chips; F=gold */
+.shortcut-chip.is-current {
+  border-color: rgba(74, 144, 217, 0.7) !important;
+  background: linear-gradient(180deg, rgba(74, 144, 217, 0.28), rgba(52, 101, 152, 0.28)) !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 0 1px rgba(74, 144, 217, 0.25) !important;
+}
+
+.shortcut-chip.is-current .shortcut-keycap {
+  color: #ffffff;
+}
+
+.shortcut-chip.is-current .shortcut-help {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+
+.shortcut-chip[data-shortcut-key="F"].is-current {
+  border-color: #f3bd73 !important;
+  background: linear-gradient(145deg, #ffd997, #e9a94f) !important;
+  color: #2d1b08 !important;
+  box-shadow: 0 0 0 1px rgba(243, 189, 115, 0.4) !important;
+}
+
+.shortcut-chip[data-shortcut-key="F"].is-current .shortcut-keycap {
+  border-color: rgba(45, 27, 8, 0.3);
+  background: linear-gradient(145deg, rgba(255, 220, 140, 0.98), rgba(230, 170, 70, 0.98));
+  color: #2d1b08;
+}
+
+.shortcut-chip[data-shortcut-key="F"].is-current .shortcut-help {
+  color: #2d1b08;
+}
+
 .shortcut-chip {
   display: inline-flex;
   align-items: center;
@@ -443,13 +479,15 @@ body.auth-locked .desktop-shortcut-bar {
     margin-left: 0;
     flex: 1 1 100%;
     min-width: 0;
-    justify-content: flex-end;
+    max-width: 100%;
+    justify-content: space-evenly;
   }
 
+  /* cancel collapsed-width constraint so all icons show spread out */
   .panel-head-tools.is-collapsed {
-    flex-basis: 96px;
-    min-width: 96px;
-    max-width: 96px;
+    flex-basis: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
 }
 

@@ -1,0 +1,432 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BetKeing — Live Odds & Predictions</title>
+  <meta name="description" content="BetKeing delivers AI-powered sports betting predictions, live odds, and break-even analysis for serious bettors.">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --accent: #eab308;
+      --bg: #000000;
+      --bg2: #0a0a0a;
+      --border: rgba(74,144,217,0.2);
+      --text: #f0f4f8;
+      --text-sub: rgba(200,220,245,0.65);
+      --text-muted: rgba(150,175,210,0.4);
+      --green: #3ec87a;
+      --red: #e85757;
+      --radius: 14px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+      line-height: 1.6;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: linear-gradient(rgba(74,144,217,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(74,144,217,0.03) 1px, transparent 1px);
+      background-size: 56px 56px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    body::after {
+      content: '';
+      position: fixed;
+      top: -30%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 1000px;
+      height: 600px;
+      background: radial-gradient(ellipse at center, rgba(74,144,217,0.07) 0%, transparent 68%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    section, nav, footer { position: relative; z-index: 1; }
+
+    #loader {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      transition: opacity 0.5s ease, visibility 0.5s ease;
+    }
+
+    #loader.hidden { opacity: 0; visibility: hidden; }
+
+    .loader-logo-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 130px;
+      height: 130px;
+      animation: loaderGlow 1.6s ease-in-out infinite;
+    }
+
+    .loader-logo-wrap img { max-width: 100%; max-height: 100%; object-fit: cover; border-radius: 50%; }
+
+    .loader-logo-fallback {
+      width: 80px; height: 80px;
+      border-radius: 20px;
+      background: linear-gradient(135deg, var(--accent), #2a70c0);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.7rem;
+      font-weight: 900;
+      color: #fff;
+    }
+
+    @keyframes loaderGlow {
+      0%, 100% { filter: drop-shadow(0 0 16px rgba(74,144,217,0.4)); }
+      50% { filter: drop-shadow(0 0 38px rgba(74,144,217,0.7)); }
+    }
+
+    .loader-bar { width: 180px; height: 2px; background: rgba(74,144,217,0.12); border-radius: 999px; overflow: hidden; }
+    .loader-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #7ec8ff); border-radius: 999px; animation: loaderFill 1.3s cubic-bezier(0.4,0,0.2,1) forwards; }
+    @keyframes loaderFill { from { width: 0% } to { width: 100% } }
+    .loader-text { font-size: 0.7rem; letter-spacing: 0.14em; text-transform: uppercase; color: #ffffff; }
+
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 clamp(20px,5vw,64px);
+      height: 62px;
+      background: rgba(0,0,0,0.92);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(74,144,217,0.1);
+    }
+
+    .nav-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-brand-img { height: 32px; width: 32px; object-fit: cover; border-radius: 50%; }
+    .nav-brand-text { font-size: 1rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text); display: block; }
+    .nav-brand-text span { color: var(--accent); }
+
+    .nav-cta {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 9px 22px; border-radius: 8px;
+      background: var(--accent); color: #fff;
+      font-weight: 700; font-size: 0.8rem; letter-spacing: 0.05em;
+      text-transform: uppercase; text-decoration: none;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    .nav-cta:hover { opacity: 0.85; transform: translateY(-1px); }
+
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center;
+      padding: 110px clamp(20px,6vw,80px) 80px;
+      gap: 28px;
+    }
+
+    .hero-logo { width: clamp(80px,14vw,140px); height: auto; object-fit: contain; animation: float 4.5s ease-in-out infinite; }
+    @keyframes float { 0%,100%{transform:translateY(0px)} 50%{transform:translateY(-12px)} }
+
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 5px 14px; border-radius: 999px;
+      border: 1px solid rgba(74,144,217,0.3);
+      background: rgba(74,144,217,0.08);
+      color: var(--accent);
+      font-size: 0.7rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    }
+
+    .hero-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 7px var(--green); animation: blink 2.2s ease-in-out infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.35} }
+
+    .hero h1 { font-size: clamp(2.6rem,6.5vw,5.2rem); font-weight: 900; line-height: 1.08; letter-spacing: -0.025em; color: #fff; }
+    .hero h1 em { font-style: normal; background: linear-gradient(130deg, var(--accent) 20%, #8ecfff 80%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .hero-sub { max-width: 560px; font-size: clamp(1rem,1.8vw,1.12rem); color: var(--text-sub); line-height: 1.75; }
+
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; }
+
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 9px;
+      padding: 14px 36px; border-radius: 10px;
+      background: var(--accent); color: #fff;
+      font-weight: 700; font-size: 0.88rem; letter-spacing: 0.04em; text-decoration: none;
+      box-shadow: 0 8px 30px rgba(74,144,217,0.28);
+      transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 14px 40px rgba(74,144,217,0.42); opacity: 0.92; }
+
+    .btn-ghost {
+      display: inline-flex; align-items: center; gap: 9px;
+      padding: 13px 32px; border-radius: 10px;
+      border: 1px solid rgba(74,144,217,0.35);
+      background: rgba(74,144,217,0.06);
+      color: var(--accent);
+      font-weight: 700; font-size: 0.88rem; letter-spacing: 0.04em; text-decoration: none;
+      transition: background 0.15s, border-color 0.15s, transform 0.15s;
+    }
+    .btn-ghost:hover { background: rgba(74,144,217,0.14); border-color: rgba(74,144,217,0.6); transform: translateY(-2px); }
+
+    .stats-strip {
+      display: flex; flex-wrap: wrap; gap: 1px; justify-content: center;
+      border: 1px solid rgba(74,144,217,0.18); border-radius: var(--radius);
+      background: rgba(74,144,217,0.18); overflow: hidden;
+      max-width: 760px; width: 100%;
+    }
+
+    .stat { flex: 1 1 160px; display: flex; flex-direction: column; align-items: center; padding: 20px 24px; background: #080808; gap: 5px; }
+    .stat-num { font-size: 1.7rem; font-weight: 900; color: #fff; line-height: 1; }
+    .stat-num span { color: var(--accent); }
+    .stat-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.09em; }
+
+    .section-head { text-align: center; margin-bottom: 52px; }
+    .section-label { display: inline-block; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }
+    .section-head h2 { font-size: clamp(1.9rem,4vw,3rem); font-weight: 900; line-height: 1.12; color: #fff; }
+    .section-head p { margin-top: 14px; font-size: 0.98rem; color: var(--text-sub); max-width: 500px; margin-left: auto; margin-right: auto; }
+
+    .features { padding: clamp(60px,8vw,120px) clamp(20px,6vw,80px); }
+
+    .feature-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1px; max-width: 1080px; margin: 0 auto;
+      border: 1px solid rgba(74,144,217,0.14); border-radius: var(--radius); overflow: hidden;
+      background: rgba(74,144,217,0.14);
+    }
+
+    .feature-card { background: #080808; padding: 32px 28px; display: flex; flex-direction: column; gap: 12px; transition: background 0.2s; }
+    .feature-card:hover { background: #0e0e0e; }
+    .feature-icon { font-size: 1.5rem; line-height: 1; }
+    .feature-card h3 { font-size: 0.95rem; font-weight: 700; color: #fff; }
+    .feature-card p { font-size: 0.85rem; color: var(--text-sub); line-height: 1.68; }
+
+    .how {
+      padding: clamp(60px,8vw,120px) clamp(20px,6vw,80px);
+      background: #060606;
+      border-top: 1px solid rgba(74,144,217,0.08);
+      border-bottom: 1px solid rgba(74,144,217,0.08);
+    }
+
+    .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 32px; max-width: 900px; margin: 0 auto; }
+    .step { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px; }
+    .step-num { width: 52px; height: 52px; border-radius: 50%; border: 2px solid var(--accent); display: flex; align-items: center; justify-content: center; font-size: 1rem; font-weight: 900; color: var(--accent); }
+    .step h3 { font-size: 0.92rem; font-weight: 700; color: #fff; }
+    .step p { font-size: 0.82rem; color: var(--text-sub); }
+
+    .preview { padding: clamp(60px,8vw,120px) clamp(20px,6vw,80px); }
+    .preview-cards { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; max-width: 980px; margin: 0 auto; }
+
+    .pred-card {
+      background: #0a0a0a; border: 1px solid rgba(74,144,217,0.18); border-radius: var(--radius);
+      padding: 22px; flex: 1 1 260px; max-width: 310px;
+      display: flex; flex-direction: column; gap: 14px;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .pred-card:hover { border-color: rgba(74,144,217,0.45); transform: translateY(-3px); }
+    .pred-card-head { display: flex; align-items: center; justify-content: space-between; }
+    .sport-label { font-size: 0.67rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+    .pred-time { font-size: 0.67rem; color: var(--text-muted); }
+    .pred-matchup { font-size: 0.98rem; font-weight: 700; color: #fff; }
+    .pred-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+    .pill { padding: 3px 9px; border-radius: 999px; font-size: 0.67rem; font-weight: 700; border: 1px solid; }
+    .pill-blue  { border-color: rgba(74,144,217,0.45); background: rgba(74,144,217,0.1);  color: #93c5fd; }
+    .pill-green { border-color: rgba(62,200,122,0.45); background: rgba(62,200,122,0.08); color: #6ee7a0; }
+    .pill-gold  { border-color: rgba(240,192,64,0.45);  background: rgba(240,192,64,0.08); color: #fcd34d; }
+    .pill-red   { border-color: rgba(232,87,87,0.4);    background: rgba(232,87,87,0.08);  color: #fca5a5; }
+    .pred-pick { background: rgba(74,144,217,0.07); border: 1px solid rgba(74,144,217,0.2); border-radius: 8px; padding: 9px 13px; font-size: 0.8rem; color: var(--text-sub); }
+    .pred-pick strong { color: var(--accent); }
+
+    footer { padding: 28px clamp(20px,5vw,64px); border-top: 1px solid rgba(74,144,217,0.1); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    .footer-brand { font-size: 0.8rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.35); }
+    .footer-brand span { color: var(--accent); }
+    footer a { color: var(--accent); text-decoration: none; }
+    footer p { font-size: 0.74rem; color: var(--text-muted); }
+    .footer-disclaimer { width: 100%; font-size: 0.68rem; color: var(--text-muted); text-align: center; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.04); margin-top: 4px; }
+
+    @media (max-width: 600px) {
+      nav { padding: 0 16px; }
+      .pred-card { max-width: 100%; }
+      footer { flex-direction: column; align-items: flex-start; }
+      .steps { gap: 20px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="loader">
+    <div class="loader-logo-wrap">
+      <img src="img/full.png" alt="BetKeing" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+      <div class="loader-logo-fallback" style="display:none">BK</div>
+    </div>
+    <div class="loader-bar"><div class="loader-bar-fill"></div></div>
+    <p class="loader-text">Loading BetKeing…</p>
+  </div>
+
+  <nav>
+    <a href="home.html" class="nav-brand">
+      <span class="nav-brand-text">Bet<span>Keing</span></span>
+    </a>
+    <a href="https://the-odds-api.com" target="_blank" rel="noopener noreferrer" class="nav-cta">Get API Key →</a>
+  </nav>
+
+  <section class="hero">
+    <img src="img/logo.png" alt="BetKeing" class="hero-logo" onerror="this.style.display='none'">
+    <div class="hero-badge">
+      <span class="hero-badge-dot"></span>
+      Live Predictions Active
+    </div>
+    <h1>Smarter Bets.<br><em>Data-Driven Edge.</em></h1>
+    <p class="hero-sub">BetKeing analyses real-time odds, historical form, and break-even thresholds to surface high-value picks before kickoff.</p>
+    <div class="hero-actions">
+      <button type="button" class="btn-primary" disabled style="cursor:default;opacity:0.7">
+        Coming Soon
+      </button>
+    </div>
+    <div class="stats-strip">
+      <div class="stat"><span class="stat-num">40<span>+</span></span><span class="stat-label">Sports Tracked</span></div>
+      <div class="stat"><span class="stat-num" style="font-size:1.05rem">Refresh</span><span class="stat-label">Refreshable Updates</span></div>
+      <div class="stat"><span class="stat-num">EV<span>+</span></span><span class="stat-label">Value Picks Only</span></div>
+      <div class="stat"><span class="stat-num" style="font-size:1.2rem">Free</span><span class="stat-label">API Key Required</span></div>
+    </div>
+  </section>
+
+  <section class="features" id="features">
+    <div class="section-head">
+      <span class="section-label">Features</span>
+      <h2>Everything a serious bettor needs</h2>
+      <p>One platform. Predictions, odds, value analysis — powered by The Odds API.</p>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card"><div class="feature-icon">📈</div><h3>Break-Even Analysis</h3><p>See instantly whether the bookmaker price offers positive expected value against the model's implied probability.</p></div>
+      <div class="feature-card"><div class="feature-icon">⚡</div><h3>Live Odds Feed</h3><p>Real-time price snapshots for hundreds of markets, locked pre-kickoff so your picks never drift after the whistle.</p></div>
+      <div class="feature-card"><div class="feature-icon">🎯</div><h3>Win% Predictions</h3><p>Calibrated win likelihoods from recent form history, market consensus, and a conservative confidence model.</p></div>
+      <div class="feature-card"><div class="feature-icon">⭐</div><h3>Favourites & Filters</h3><p>Pin your sports, filter by EV, Win% or Edge, and focus only on the picks that match your strategy.</p></div>
+      <div class="feature-card"><div class="feature-icon">🔒</div><h3>Your Key, Your Data</h3><p>No accounts, no tracking. Your Odds API key stays in your browser — data is fetched directly to your device.</p></div>
+      <div class="feature-card"><div class="feature-icon">🌙</div><h3>Custom Themes</h3><p>Pick any accent colour and the entire interface adapts instantly — from chips to charts to status bars.</p></div>
+    </div>
+  </section>
+
+  <section class="how" id="how">
+    <div class="section-head">
+      <span class="section-label">How It Works</span>
+      <h2>Up and running in 60 seconds</h2>
+    </div>
+    <div class="steps">
+      <div class="step"><div class="step-num">1</div><h3>Get an API Key</h3><p>Sign up free at the-odds-api.com and copy your key.</p></div>
+      <div class="step"><div class="step-num">2</div><h3>Paste & Save</h3><p>Open settings in BetKeing, paste your key, and save.</p></div>
+      <div class="step"><div class="step-num">3</div><h3>Browse Sports</h3><p>Pick any sport, choose a time range, and load the feed.</p></div>
+      <div class="step"><div class="step-num">4</div><h3>Back Value Picks</h3><p>Filter for EV+ selections and review break-even analysis before placing.</p></div>
+    </div>
+  </section>
+
+  <section class="preview" id="preview">
+    <div class="section-head">
+      <span class="section-label">Live Picks Preview</span>
+      <h2>What a prediction looks like</h2>
+      <p>Sample cards — real data loads once your API key is active.</p>
+    </div>
+    <div class="preview-cards">
+      <div class="pred-card">
+        <div class="pred-card-head"><span class="sport-label">Soccer · EPL</span><span class="pred-time">Today 20:00</span></div>
+        <div class="pred-matchup">Arsenal vs Chelsea</div>
+        <div class="pred-pills"><span class="pill pill-blue">Win: 64%</span><span class="pill pill-green">EV: +8.2%</span><span class="pill pill-gold">Conf: High</span></div>
+        <div class="pred-pick"><strong>Pick:</strong> Arsenal · Pre: 1.72</div>
+      </div>
+      <div class="pred-card">
+        <div class="pred-card-head"><span class="sport-label">NBA · Regular</span><span class="pred-time">Today 23:30</span></div>
+        <div class="pred-matchup">Lakers vs Celtics</div>
+        <div class="pred-pills"><span class="pill pill-blue">Win: 58%</span><span class="pill pill-green">EV: +4.7%</span><span class="pill pill-gold">Conf: Med</span></div>
+        <div class="pred-pick"><strong>Pick:</strong> Celtics · Pre: 1.88</div>
+      </div>
+      <div class="pred-card">
+        <div class="pred-card-head"><span class="sport-label">NFL · Week 1</span><span class="pred-time">Sun 02:00</span></div>
+        <div class="pred-matchup">Chiefs vs Ravens</div>
+        <div class="pred-pills"><span class="pill pill-blue">Win: 61%</span><span class="pill pill-red">EV: -1.4%</span><span class="pill pill-gold">Conf: High</span></div>
+        <div class="pred-pick"><strong>Pick:</strong> Chiefs · Pre: 1.62</div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span class="footer-brand">Bet<span>Keing</span></span>
+    <p>Powered by <a href="https://the-odds-api.com" target="_blank" rel="noopener noreferrer">The Odds API</a></p>
+    <p class="footer-disclaimer">BetKeing is an informational tool only. Predictions are statistical estimates, not financial advice. Gamble responsibly. 18+.</p>
+  </footer>
+
+  <script>
+    (function () {
+      var KEY = 'keieye_accent_color_v1';
+      var DEFAULT = '#eab308';
+
+      function hexToRgb(hex) {
+        var h = String(hex || DEFAULT).replace('#', '');
+        return { r: parseInt(h.slice(0,2),16)||74, g: parseInt(h.slice(2,4),16)||144, b: parseInt(h.slice(4,6),16)||217 };
+      }
+
+      function applyAccent(hex) {
+        var c = hexToRgb(hex), r = c.r, g = c.g, b = c.b;
+        var lum = 0.299*r + 0.587*g + 0.114*b;
+        var tx = lum > 155 ? '#111111' : '#ffffff';
+        var a = 'rgba('+r+','+g+','+b+',';
+        var rgb = 'rgb('+r+','+g+','+b+')';
+        var s = document.getElementById('accent-override');
+        if (!s) { s = document.createElement('style'); s.id = 'accent-override'; document.head.appendChild(s); }
+        s.textContent = [
+          ':root{--accent:'+rgb+'}',
+          '.nav-cta{background:'+rgb+'!important;color:'+tx+'!important}',
+          '.btn-primary{background:'+rgb+'!important;color:'+tx+'!important;box-shadow:0 8px 30px '+a+'0.28)!important}',
+          '.btn-primary:hover{box-shadow:0 14px 40px '+a+'0.42)!important}',
+          '.btn-ghost{border-color:'+a+'0.35)!important;background:'+a+'0.06)!important;color:'+rgb+'!important}',
+          '.btn-ghost:hover{background:'+a+'0.14)!important;border-color:'+a+'0.6)!important}',
+          '.hero-badge{border-color:'+a+'0.3)!important;background:'+a+'0.08)!important;color:'+rgb+'!important}',
+          '.hero h1 em{background:linear-gradient(130deg,'+rgb+' 20%,rgba('+Math.min(255,r+80)+','+Math.min(255,g+80)+','+Math.min(255,b+80)+',1) 80%)!important;-webkit-background-clip:text!important;background-clip:text!important}',
+          '.section-label{color:'+rgb+'!important}',
+          '.sport-label{color:'+rgb+'!important}',
+          '.pred-pick strong{color:'+rgb+'!important}',
+          '.pred-pick{border-color:'+a+'0.2)!important;background:'+a+'0.07)!important}',
+          '.pred-card{border-color:'+a+'0.18)!important}',
+          '.pred-card:hover{border-color:'+a+'0.45)!important}',
+          '.step-num{border-color:'+rgb+'!important;color:'+rgb+'!important}',
+          '.stats-strip{border-color:'+a+'0.18)!important;background:'+a+'0.18)!important}',
+          '.stat-num span{color:'+rgb+'!important}',
+          '.footer-brand span{color:'+rgb+'!important}',
+          'footer a{color:'+rgb+'!important}',
+          '.nav-brand-text span{color:'+rgb+'!important}',
+          '.hero-logo{filter:drop-shadow(0 0 28px '+a+'0.4))!important}',
+          '.loader-logo-wrap{filter:drop-shadow(0 0 24px '+a+'0.55))!important}',
+          '.loader-logo-fallback{background:linear-gradient(135deg,'+rgb+',rgba('+Math.round(r*.6)+','+Math.round(g*.6)+','+Math.round(b*.6)+',1))!important}',
+          '.loader-bar-fill{background:linear-gradient(90deg,'+rgb+',rgba('+Math.min(255,r+60)+','+Math.min(255,g+60)+','+Math.min(255,b+60)+',1))!important}',
+          'body::after{background:radial-gradient(ellipse at center,'+a+'0.07) 0%,transparent 68%)!important}',
+          '.feature-grid{border-color:'+a+'0.14)!important;background:'+a+'0.14)!important}',
+          'nav{border-bottom-color:'+a+'0.1)!important}',
+          '.how{border-top-color:'+a+'0.08)!important;border-bottom-color:'+a+'0.08)!important}',
+          'footer{border-top-color:'+a+'0.1)!important}',
+          '.pill-blue{border-color:'+a+'0.45)!important;background:'+a+'0.1)!important}',
+        ].join('\n');
+      }
+
+      var saved; try { saved = localStorage.getItem(KEY); } catch(e){}
+      applyAccent(saved || DEFAULT);
+      window.addEventListener('storage', function(e){ if(e.key===KEY){ applyAccent(e.newValue||DEFAULT); } });
+    }());
+
+    window.addEventListener('load', function(){ setTimeout(function(){ document.getElementById('loader').classList.add('hidden'); }, 1300); });
+  </script>
+</body>
+</html>

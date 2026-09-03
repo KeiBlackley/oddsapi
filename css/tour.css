@@ -1,0 +1,161 @@
+/* Tour overlay styles */
+/* --- Tour overlay --- */
+.tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  display: none;
+  pointer-events: all;
+  outline: none;
+}
+
+.tour-overlay.is-active {
+  display: block;
+}
+
+.tour-spotlight {
+  position: fixed;
+  z-index: 9992;
+  border-radius: 10px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.74);
+  outline: 2px solid rgba(158, 228, 183, 0.55);
+  outline-offset: 0;
+  pointer-events: none;
+  transition: top 0.22s ease, left 0.22s ease, width 0.22s ease, height 0.22s ease;
+}
+
+.tour-card {
+  position: fixed;
+  z-index: 9999;
+  width: 320px;
+  padding: 16px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(14, 24, 38, 0.99), rgba(8, 16, 28, 0.99));
+  border: 1px solid rgba(158, 228, 183, 0.32);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  pointer-events: all;
+  transition: top 0.22s ease, left 0.22s ease;
+}
+
+.tour-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.tour-step-counter {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9ee4b7;
+}
+
+.tour-close-btn {
+  padding: 4px 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(170, 197, 235, 0.15);
+  background: transparent;
+  color: #8ca2be;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.tour-close-btn:hover {
+  color: #e6f0fc;
+  border-color: rgba(170, 197, 235, 0.38);
+}
+
+.tour-title {
+  margin: 0 0 8px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #e6f0fc;
+  letter-spacing: 0.02em;
+}
+
+.tour-desc {
+  margin: 0 0 14px;
+  font-size: 0.78rem;
+  line-height: 1.56;
+  color: #b8c9de;
+}
+
+.tour-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.tour-nav-btn {
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(170, 197, 235, 0.22);
+  background: rgba(255, 255, 255, 0.03);
+  color: #c8daee;
+  font-size: 0.74rem;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: border-color 0.14s, background 0.14s, color 0.14s;
+}
+
+.tour-nav-btn:hover {
+  border-color: rgba(158, 228, 183, 0.5);
+  background: rgba(158, 228, 183, 0.08);
+  color: #eaf8ef;
+}
+
+.tour-nav-btn.tour-next-btn {
+  border-color: rgba(158, 228, 183, 0.42);
+  color: #9ee4b7;
+}
+
+.tour-nav-btn:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Waiting mode: overlay steps back so shortcut chips are clickable */
+.tour-overlay.tour-waiting {
+  pointer-events: none;
+}
+
+.tour-overlay.tour-waiting #tourCard {
+  pointer-events: all;
+}
+
+.game-card.be-card-selected {
+  outline: 2px solid rgba(158, 228, 183, 0.7);
+  outline-offset: 2px;
+}
+
+.game-card.be-card-dimmed {
+  opacity: 0.18;
+  pointer-events: none;
+  order: 2;
+}
+
+.be-stat-btn {
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.14s, background 0.14s, box-shadow 0.14s;
+}
+
+.be-stat-btn:hover {
+  border-color: rgba(170, 197, 235, 0.45);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.be-stat-btn.be-stat-active {
+  border-color: rgba(158, 228, 183, 0.5);
+  background: linear-gradient(180deg, rgba(26, 56, 40, 0.96), rgba(18, 38, 28, 0.96));
+}
+
+[data-be-upcoming-filter="below"].be-stat-active,
+[data-be-results-filter="below"].be-stat-active {
+  border-color: rgba(242, 166, 166, 0.55);
+  background: linear-gradient(180deg, rgba(58, 22, 22, 0.96), rgba(40, 14, 14, 0.96));
+}
+

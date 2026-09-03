@@ -1,0 +1,109 @@
+/* Dashboard and break-even styles */
+/* --- Dashboard --- */
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 0;
+}
+
+.dashboard-section {
+  padding: 12px 12px 14px;
+  border: 1px solid rgba(170, 197, 235, 0.13);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(14, 24, 38, 0.97), rgba(11, 19, 31, 0.97));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 6px 16px rgba(1, 8, 18, 0.2);
+}
+
+.dashboard-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.dashboard-section-title {
+  margin: 0;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #e6f0fc;
+}
+
+.dashboard-chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.dashboard-empty {
+  padding: 24px 0;
+  font-size: 0.78rem;
+  color: #8ca2be;
+  text-align: center;
+}
+
+.dashboard-chart-stat {
+  margin: 8px 0 0;
+  font-size: 0.74rem;
+  color: #9bb1cb;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.dashboard-chart-stat strong {
+  color: #e6f0fc;
+}
+
+.dashboard-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.dashboard-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.68rem;
+  color: #8ca2be;
+}
+
+.dashboard-legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Compact select inside settings panel and stat boxes */
+.settings-panel .sport-scope-select,
+.summary-stat .sport-scope-select {
+  min-height: 32px;
+  padding: 5px 32px 5px 8px;
+  font-size: 0.78rem;
+  border-radius: 8px;
+  background-position:
+    calc(100% - 14px) calc(50% - 2px),
+    calc(100% - 8px) calc(50% - 2px),
+    0 0;
+}
+
+/* Simplified settings modal (dashboard view) */
+#apiKeyModal.simplified .settings-panel,
+#apiKeyModal.simplified #resultsSportScopeLabel,
+#apiKeyModal.simplified #resultsSportScopeSelect {
+  display: none;
+}
+
+/* Best pick highlight on dashboard */
+.game-card.game-card-best {
+  border-color: rgba(245, 200, 66, 0.55) !important;
+  background: linear-gradient(180deg, rgba(80, 64, 14, 0.28), rgba(18, 29, 45, 0.96)) !important;
+  box-shadow: 0 0 0 1px rgba(245, 200, 66, 0.25), 0 8px 20px rgba(0, 0, 0, 0.24) !important;
+}

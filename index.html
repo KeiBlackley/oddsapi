@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title> Predictions </title>
+    <title>BetKeing</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,18 +12,15 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" referrerpolicy="no-referrer" media="print" onload="this.media='all'">
     <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" referrerpolicy="no-referrer"></noscript>
     
-    <link rel="stylesheet" href="css/base.css"> 
-    <link rel="stylesheet" href="css/layout.css">
-    <link rel="stylesheet" href="css/components.css">
+    <link rel="stylesheet" href="css/base.css?v=20260903"> 
+    <link rel="stylesheet" href="css/layout.css?v=20260903">
+    <link rel="stylesheet" href="css/components.css?v=20260903">
+    <link rel="stylesheet" href="css/tour.css?v=20260903">
+    <link rel="stylesheet" href="css/dashboard.css?v=20260903">
 
 </head>
 <body>
     <div id="desktopShortcutBar" class="desktop-shortcut-bar appbar" aria-label="Keyboard shortcuts">
-        <button type="button" class="shortcut-chip" data-shortcut-key="D" aria-label="Shortcut D: dashboard">
-            <span class="shortcut-keycap">D</span>
-            <span class="shortcut-help">Dashboard</span>
-        </button>
-        <span class="shortcut-bar-divider" aria-hidden="true">|</span>
         <button type="button" class="shortcut-chip" data-shortcut-key="A" aria-label="Shortcut A: all sports">
             <span class="shortcut-keycap">A</span>
             <span class="shortcut-help">All sports</span>
@@ -70,7 +67,6 @@
         <div class="modal-card">
             <div class="modal-header">
                 <h3 id="apiKeyModalTitle">API Key Settings</h3>
-                <button type="button" class="modal-close icon-only" data-close-modal="true" aria-label="Close settings"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
             </div>
             <label class="field-label" for="apiKeyInput">API key</label>
             <select id="savedApiKeySelect" class="api-key-select hidden" aria-label="Saved API keys">
@@ -112,6 +108,7 @@
                     </div>
                 </div>
             </div>
+            <div class="api-settings-separator" aria-hidden="true"></div>
             <div class="modal-actions">
                 <div class="modal-actions-left">
                     <button type="button" id="cancelApiKeyBtn" class="danger-btn"><i class="fa-solid fa-xmark" aria-hidden="true"></i>Cancel</button>
@@ -178,13 +175,14 @@
                         <button id="refreshFeedBtn" type="button" class="settings-btn icon-only refresh-feed-btn" aria-label="Refresh feed" title="Refresh feed"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
                         <div class="panel-head-copy">
                             <h1 id="pageTitle" class="title">Sports Catalog</h1>
-                            <p id="panelSub" class="panel-sub">Live Odds &amp; Predictions</p>
+                            <p id="panelSub" class="panel-sub">BetKeing &mdash; Live Odds &amp; Predictions</p>
                         </div>
                         <div class="panel-head-tools is-collapsed">
                             <input id="sportsSearchInput" class="sports-search-input" type="search" placeholder="Search sports by key, title or group" aria-label="Search sports catalog" disabled tabindex="-1">
-                            <button id="searchToggleBtn" type="button" class="settings-btn search-toggle-btn icon-only" aria-label="Open search bar" aria-pressed="false" title="Open search bar"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i></button>
-                            <button id="settingsBtn" type="button" class="settings-btn icon-only" aria-haspopup="dialog" aria-controls="apiKeyModal" aria-label="Settings" title="Settings"><i class="fa-solid fa-gear" aria-hidden="true"></i></button>
-                            <button id="authStatusBtn" type="button" class="settings-btn icon-only auth-status-btn hidden" aria-label="Account" title="Signed in - click to manage"><i class="fa-solid fa-circle-user" aria-hidden="true"></i></button>
+                            <button id="searchToggleBtn" type="button" class="settings-btn search-toggle-btn icon-only has-tooltip" aria-label="Open search bar" aria-pressed="false" title="Search" data-tooltip="Search"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i></button>
+                            <button id="colorPickerBtn" type="button" class="settings-btn icon-only has-tooltip" aria-label="Theme colour" title="Theme colour" data-tooltip="Theme colour"><i class="fa-solid fa-palette" aria-hidden="true"></i></button>
+                            <button id="settingsBtn" type="button" class="settings-btn icon-only has-tooltip" aria-haspopup="dialog" aria-controls="apiKeyModal" aria-label="Settings" title="Settings" data-tooltip="Settings"><i class="fa-solid fa-gear" aria-hidden="true"></i></button>
+                            <button id="authStatusBtn" type="button" class="settings-btn icon-only auth-status-btn hidden has-tooltip" aria-label="Sign out" title="Sign out" data-tooltip="Sign out"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i></button>
                         </div>
                     </div>
                 </div>
@@ -196,11 +194,11 @@
                         <p class="subhead">Games</p>
                         <div class="empty">Click a sport to load the selected range.</div>
                     </div>
-                    <div id="dashboardWrap" class="subcard hidden"></div>
+
                 </div>
             </section>
         </div>
-        <footer class="site-footer">Made by Keirran Blackley.</footer>
+        <footer class="site-footer">Keirran Blackley uses <a href="https://the-odds-api.com/" target="_blank" rel="noopener noreferrer">The Odds API</a> to generate predictions.</footer>
     </div>
     <div id="globalLoadingOverlay" class="loading-overlay" aria-hidden="true">
         <div class="loading-overlay-spinner" role="status" aria-live="polite" aria-label="Loading">
@@ -208,6 +206,35 @@
         </div>
     </div>
     <div id="status" class="status" aria-live="polite"></div>
+
+    <div id="colorPickerModal" class="color-picker-modal" aria-hidden="true" role="dialog" aria-label="Choose theme colour">
+        <div class="color-picker-card">
+            <div class="color-picker-head">
+                <span class="color-picker-title">Theme Colour</span>
+                <button type="button" id="colorPickerCloseBtn" class="icon-only color-picker-close" aria-label="Close">
+                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+            </div>
+            <div class="color-picker-preview" id="colorPickerPreview" aria-hidden="true"></div>
+            <div class="color-picker-swatches" id="colorPickerSwatches" role="group" aria-label="Colour presets">
+                <button class="color-swatch" data-color="#4a90d9" title="Blue" aria-label="Blue" style="--swatch:#4a90d9"></button>
+                <button class="color-swatch" data-color="#8b5cf6" title="Purple" aria-label="Purple" style="--swatch:#8b5cf6"></button>
+                <button class="color-swatch" data-color="#06b6d4" title="Teal" aria-label="Teal" style="--swatch:#06b6d4"></button>
+                <button class="color-swatch" data-color="#10b981" title="Green" aria-label="Green" style="--swatch:#10b981"></button>
+                <button class="color-swatch" data-color="#f97316" title="Orange" aria-label="Orange" style="--swatch:#f97316"></button>
+                <button class="color-swatch" data-color="#ec4899" title="Pink" aria-label="Pink" style="--swatch:#ec4899"></button>
+                <button class="color-swatch" data-color="#ef4444" title="Red" aria-label="Red" style="--swatch:#ef4444"></button>
+                <button class="color-swatch" data-color="#eab308" title="Gold" aria-label="Gold" style="--swatch:#eab308"></button>
+                <button class="color-swatch" data-color="#64748b" title="Slate" aria-label="Slate" style="--swatch:#64748b"></button>
+                <button class="color-swatch" data-color="#1a1a1a" title="Black" aria-label="Black" style="--swatch:#1a1a1a;border-color:rgba(255,255,255,0.35)"></button>
+                <button class="color-swatch" data-color="#e8edf4" title="White" aria-label="White" style="--swatch:#e8edf4"></button>
+                <button class="color-swatch" data-color="#94a3b8" title="Silver" aria-label="Silver" style="--swatch:#94a3b8"></button>
+            </div>          
+            <label class="color-picker-custom-label" for="accentColorInput">Custom</label>
+            <input type="color" id="accentColorInput" value="#eab308" aria-label="Custom accent colour">
+            <button type="button" id="colorPickerResetBtn" class="color-picker-reset">Reset to default</button>
+        </div>
+    </div>
 
     <div id="tourOverlay" class="tour-overlay" aria-hidden="true" tabindex="-1">
         <div id="tourSpotlight" class="tour-spotlight" aria-hidden="true"></div>
@@ -221,15 +248,19 @@
             <h4 id="tourTitle" class="tour-title"></h4>
             <p id="tourDesc" class="tour-desc"></p>
             <div class="tour-actions">
-                <button type="button" id="tourPrevBtn" class="tour-nav-btn" disabled>← Prev</button>
                 <button type="button" id="tourNextBtn" class="tour-nav-btn tour-next-btn">Next →</button>
             </div>
         </div>
     </div>
 
-    <script src="js/config.js"></script>
-    <script src="js/catalog.js"></script>
-    <script src="js/upcoming.js"></script>
-    <script src="js/app.js"></script>
+    <script src="js/runtime.js?v=20260904"></script>
+    <script src="js/config.js?v=20260907"></script>
+    <script src="js/network.js?v=20260903"></script>
+    <script src="js/cache.js?v=20260903"></script>
+    <script src="js/catalog.js?v=20260903"></script>
+    <script src="js/upcoming.js?v=20260914"></script>
+    <script src="js/dashboard.js?v=20260911"></script>
+    <script src="js/theme.js?v=20260903"></script>
+    <script src="js/app.js?v=20260903"></script>
 </body>
 </html>

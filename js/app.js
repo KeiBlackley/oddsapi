@@ -2,7 +2,6 @@
 
 const TOUR_STEPS = [
 	{ selector: '#desktopShortcutBar', title: 'Keyboard Shortcut Bar', desc: 'Every chip here is a live keyboard shortcut. Press the key on your keyboard to trigger the action instantly — no mouse needed.', position: 'bottom' },
-	{ selector: '[data-shortcut-key="D"]', title: 'Dashboard  ·  D', desc: 'Shows two line graphs: one for upcoming picks (dots coloured by win confidence) and one for recent results (green = won, red = lost). Y-axis is the predicted odds per game.', position: 'bottom' },
 	{ selector: '[data-shortcut-key="A"]', title: 'All Sports  ·  A', desc: 'Switches the catalog to every available sport from the API. Click any row to load its predictions and odds.', position: 'bottom' },
 	{ selector: '[data-shortcut-key="F"]', title: 'Favourites  ·  F', desc: 'Filters the catalog to only the sports you have starred. Star a sport from the table to save it here.', position: 'bottom' },
 	{ selector: '[data-shortcut-key="R"]', title: 'Results  ·  R', desc: 'Loads recent match results and scores each prediction against the real outcome. The Backtest card tracks historical accuracy over time.', position: 'bottom' },
@@ -22,7 +21,7 @@ const MOBILE_TOUR_STEPS = [
 	{ selector: '#tableWrap', title: 'Sports Catalog', desc: 'Tap any sport row to load its predictions and odds. The star button saves a sport to your Favourites. Use the Settings panel to filter to Favourites only.', position: 'top' },
 ];
 
-const _tourState = { active: false, step: 0, steps: TOUR_STEPS };
+const _tourState = { active: false, step: 0, steps: TOUR_STEPS, waitingForChip: false };
 
 function init() {
 	const appbars = Array.from(document.querySelectorAll('.appbar, .secondary-appbar'));
@@ -34,7 +33,7 @@ function init() {
 		if (!shortcutBar) {
 			return;
 		}
-		const chip = shortcutBar.querySelector('[data-shortcut-key="' + key + '"]');
+		const chip = shortcutBar.querySelector('[data-shortcut-key="' + key + '" i]');
 		if (!(chip instanceof HTMLElement)) {
 			return;
 		}
@@ -103,7 +102,7 @@ function init() {
 
 	const restoredViewState = readRefreshViewState();
 	state.secureMode = readSecureModeSetting();
-	persistSecureModeSetting(true);
+	persistSecureModeSetting();
 	if (state.secureMode === true) {
 		applySecureModeStoragePolicy();
 	}
@@ -177,26 +176,13 @@ function init() {
 		openApiKeyModal();
 	});
 	if (el.authStatusBtn) {
-		let _authHovered = false;
-		el.authStatusBtn.addEventListener('mouseenter', () => {
-			_authHovered = true;
-			const icon = el.authStatusBtn.querySelector('i');
-			if (icon instanceof HTMLElement) icon.className = 'fa-solid fa-right-from-bracket';
-			el.authStatusBtn.title = 'Sign out';
-		});
-		el.authStatusBtn.addEventListener('mouseleave', () => {
-			_authHovered = false;
-			const icon = el.authStatusBtn.querySelector('i');
-			if (icon instanceof HTMLElement) icon.className = 'fa-solid fa-circle-user';
-			el.authStatusBtn.title = 'Signed in — click to manage';
-		});
+		const icon = el.authStatusBtn.querySelector('i');
+		if (icon instanceof HTMLElement) { icon.className = 'fa-solid fa-right-from-bracket'; }
+		el.authStatusBtn.title = 'Sign out';
+		el.authStatusBtn.setAttribute('aria-label', 'Sign out');
 		el.authStatusBtn.addEventListener('click', () => {
 			flashShortcutContainer('escape');
-			if (_authHovered) {
-				logoutCurrentUser();
-			} else {
-				openApiKeyModal();
-			}
+			logoutCurrentUser();
 		});
 	}
 	if (el.refreshFeedBtn) {
@@ -307,6 +293,13 @@ function init() {
 
 	if (el.sportsSearchInput) {
 		let _searchDebounceTimer = null;
+		el.sportsSearchInput.addEventListener('blur', () => {
+			if (state.searchBarExpanded) {
+				state.searchBarExpanded = false;
+				syncSearchInputMode();
+				persistRefreshViewState();
+			}
+		});
 		el.sportsSearchInput.addEventListener('input', (event) => {
 			const rawInput = event.target && event.target.value ? String(event.target.value) : '';
 			const nextValue = clampText(rawInput, MAX_SEARCH_INPUT_LENGTH);
@@ -683,10 +676,27 @@ function init() {
 
 	const runShortcutAction = (shortcutKey) => {
 		const key = String(shortcutKey || '').toLowerCase();
+	if (_tourState.waitingForChip) {
+		const stepIdx = findTourStepForChip(key.toUpperCase());
+		if (stepIdx < 0) { return false; }
+		exitTourWaitingMode();
+		_tourState.step = stepIdx;
+		renderTourStep(stepIdx);
+		// Fall through: let the real shortcut action also execute
+	} else if (_tourState.active) {
+		const stepIdx = findTourStepForChip(key.toUpperCase());
+		if (stepIdx < 0) { return false; }
+		_tourState.step = stepIdx;
+		renderTourStep(stepIdx);
+		// Fall through: execute action AND update tooltip
+	}
 		if (isLoginMode() && key !== 'escape') {
 			return false;
 		}
 		if (key === 'escape') {
+			if (state.rangeLoading || state.busyOverlayCount > 0) {
+				return false;
+			}
 			flashShortcutContainer('escape');
 			if (closeAllOpenModals()) {
 				return true;
@@ -695,6 +705,9 @@ function init() {
 			return true;
 		}
 		if (key === 'b') {
+			if (state.rangeLoading || state.busyOverlayCount > 0) {
+				return false;
+			}
 			flashShortcutContainer('b');
 			if (state.view === 'catalog') {
 				return false;
@@ -717,6 +730,9 @@ function init() {
 			return true;
 		}
 		if (key === 's' && el.sportsSearchInput) {
+			if (state.rangeLoading || state.busyOverlayCount > 0) {
+				return false;
+			}
 			flashShortcutContainer('s');
 			if (el.searchToggleBtn) {
 				state.searchBarExpanded = !state.searchBarExpanded;
@@ -751,12 +767,6 @@ function init() {
 		if (key === 'i') {
 			flashShortcutContainer('i');
 			startTour();
-			return true;
-		}
-		if (key === 'd') {
-			flashShortcutContainer('d');
-			setView('dashboard');
-			renderDashboard();
 			return true;
 		}
 		return false;
@@ -872,6 +882,34 @@ init();
 
 document.addEventListener('contextmenu', (event) => event.preventDefault());
 
+// Reliable top-level delegation for dynamically rendered view-more buttons
+document.addEventListener('click', (event) => {
+	if (!(event.target instanceof Element)) { return; }
+	const vmUp = event.target.closest('[data-action="view-more-upcoming"]');
+	if (vmUp && el.upcomingWrap && el.upcomingWrap.contains(vmUp)) {
+		event.preventDefault();
+		event.stopPropagation();
+		handleUpcomingViewMoreClick();
+		return;
+	}
+	const vmRec = event.target.closest('[data-action="view-more-recent"]');
+	if (vmRec && el.upcomingWrap && el.upcomingWrap.contains(vmRec)) {
+		event.preventDefault();
+		event.stopPropagation();
+		handleRecentResultsViewMoreClick();
+	}
+});
+
+document.addEventListener('click', (event) => {
+	const btn = event.target instanceof Element ? event.target.closest('.backtest-collapse-btn') : null;
+	if (!btn) { return; }
+	event.stopPropagation();
+	const card = btn.closest('.backtest-card');
+	if (!card) { return; }
+	const collapsed = card.classList.toggle('is-collapsed');
+	btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+});
+
 // --- Tour ---
 function startTour() {
 	if (_tourState.active) {
@@ -891,14 +929,27 @@ function startTour() {
 
 function endTour() {
 	_tourState.active = false;
+	_tourState.waitingForChip = false;
+	document.body.classList.remove('tour-active-waiting');
 	const overlay = document.getElementById('tourOverlay');
 	if (overlay) {
-		overlay.classList.remove('is-active');
+		overlay.classList.remove('is-active', 'tour-waiting');
 		overlay.setAttribute('aria-hidden', 'true');
 	}
 }
 
 function tourNavigate(delta) {
+	if (_tourState.waitingForChip) {
+		exitTourWaitingMode();
+		_tourState.step = 1;
+		renderTourStep(1);
+		return;
+	}
+	const isDesktop = window.innerWidth >= 1199;
+	if (_tourState.step === 0 && delta === 1 && isDesktop && _tourState.steps === TOUR_STEPS) {
+		enterTourWaitingMode();
+		return;
+	}
 	const next = _tourState.step + delta;
 	if (next >= _tourState.steps.length) {
 		endTour();
@@ -921,7 +972,6 @@ function renderTourStep(index) {
 	const counter = document.getElementById('tourStepCounter');
 	const titleEl = document.getElementById('tourTitle');
 	const descEl = document.getElementById('tourDesc');
-	const prevBtn = document.getElementById('tourPrevBtn');
 	const nextBtn = document.getElementById('tourNextBtn');
 	if (counter) {
 		counter.textContent = (index + 1) + ' of ' + _tourState.steps.length;
@@ -932,11 +982,10 @@ function renderTourStep(index) {
 	if (descEl) {
 		descEl.textContent = step.desc;
 	}
-	if (prevBtn) {
-		prevBtn.disabled = index === 0;
-	}
+	const isDesktopStep0 = index === 0 && window.innerWidth >= 1199 && _tourState.steps === TOUR_STEPS;
 	if (nextBtn) {
-		nextBtn.textContent = index === _tourState.steps.length - 1 ? 'Finish' : 'Next →';
+		nextBtn.style.display = '';
+		nextBtn.textContent = isDesktopStep0 ? 'SPACE' : index === _tourState.steps.length - 1 ? 'Finish' : 'Next →';
 	}
 	const spotlight = document.getElementById('tourSpotlight');
 	if (spotlight) {
@@ -990,19 +1039,30 @@ function positionTourCard(target, preferred) {
 function initTour() {
 	const overlay = document.getElementById('tourOverlay');
 	const closeBtn = document.getElementById('tourCloseBtn');
-	const prevBtn = document.getElementById('tourPrevBtn');
 	const nextBtn = document.getElementById('tourNextBtn');
 	if (closeBtn) {
 		closeBtn.addEventListener('click', (e) => { e.stopPropagation(); endTour(); });
 	}
-	if (prevBtn) {
-		prevBtn.addEventListener('click', (e) => { e.stopPropagation(); tourNavigate(-1); });
-	}
 	if (nextBtn) {
 		nextBtn.addEventListener('click', (e) => { e.stopPropagation(); tourNavigate(1); });
 	}
+	// Shortcut bar chip click detection for interactive waiting mode
+	const shortcutBar = document.getElementById('desktopShortcutBar');
+	if (shortcutBar) {
+		shortcutBar.addEventListener('click', (e) => {
+			if (!_tourState.waitingForChip) { return; }
+			const chip = e.target instanceof Element ? e.target.closest('[data-shortcut-key]') : null;
+			if (!chip) { return; }
+			const stepIdx = findTourStepForChip(chip.getAttribute('data-shortcut-key') || '');
+			if (stepIdx >= 0) {
+				exitTourWaitingMode();
+				_tourState.step = stepIdx;
+				renderTourStep(stepIdx);
+			}
+		});
+	}
 	if (overlay) {
-		overlay.addEventListener('click', () => { if (_tourState.active) { tourNavigate(1); } });
+		overlay.addEventListener('click', () => { if (_tourState.active && !_tourState.waitingForChip) { tourNavigate(1); } });
 		const tourCard = document.getElementById('tourCard');
 		if (tourCard) {
 			tourCard.addEventListener('click', (e) => e.stopPropagation());
@@ -1012,10 +1072,44 @@ function initTour() {
 				return;
 			}
 			if (e.key === 'Escape') { e.preventDefault(); endTour(); }
-			else if (e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); tourNavigate(1); }
-			else if (e.key === 'ArrowLeft') { e.preventDefault(); tourNavigate(-1); }
+			else if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); tourNavigate(1); }
+			else if (!_tourState.waitingForChip && (e.key === 'ArrowRight' || e.key === 'Enter')) { e.preventDefault(); tourNavigate(1); }
 		});
 	}
 }
 
 initTour();
+
+if (typeof initTheme === 'function') { initTheme(); }
+
+function findTourStepForChip(chipKey) {
+	const upper = String(chipKey || '').toUpperCase();
+	const steps = _tourState.steps || [];
+	for (let i = 0; i < steps.length; i++) {
+		const m = (steps[i].selector || '').match(/\[data-shortcut-key="([^"]+)"\]/);
+		if (m && m[1].toUpperCase() === upper) { return i; }
+	}
+	return -1;
+}
+
+function enterTourWaitingMode() {
+	_tourState.waitingForChip = true;
+	document.body.classList.add('tour-active-waiting');
+	const overlay = document.getElementById('tourOverlay');
+	if (overlay) { overlay.classList.add('tour-waiting'); overlay.focus(); }
+	const counter = document.getElementById('tourStepCounter');
+	const titleEl = document.getElementById('tourTitle');
+	const descEl = document.getElementById('tourDesc');
+	const nextBtn = document.getElementById('tourNextBtn');
+	if (counter) { counter.textContent = 'Interactive'; }
+	if (titleEl) { titleEl.textContent = 'Explore'; }
+	if (descEl) { descEl.textContent = 'Press any shortcut key on your keyboard, or click a button in the bar above, to see what it does.'; }
+	if (nextBtn) { nextBtn.style.display = 'none'; }
+}
+
+function exitTourWaitingMode() {
+	_tourState.waitingForChip = false;
+	document.body.classList.remove('tour-active-waiting');
+	const overlay = document.getElementById('tourOverlay');
+	if (overlay) { overlay.classList.remove('tour-waiting'); }
+}
